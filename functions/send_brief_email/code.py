@@ -93,14 +93,22 @@ async def send_brief_email(ctx: FunctionContext, data: SendBriefInput) -> SendBr
     body = brief["content"].strip()
     res.subject = f"{data.subject_prefix} — {datetime.now(timezone.utc).strftime('%a %d %b')}"
 
-    # Through whichever mailbox the person connected: Outlook only when Gmail is not there.
+    # From the person's primary mailbox when they chose one (settings.primary_mail_account
+    # holds "gmail:<account id>" or "outlook:<account id>"); otherwise whichever mailbox
+    # they connected, Outlook only when Gmail is not there.
+    use: dict = {}
     use_outlook = False
     try:
-        st = pod.connectors.status()
-        on = {str(a.get("connector_id") or "").lower()
-              for a in (st.get("connected_accounts") or st.get("accounts") or [])
-              if isinstance(a, dict) and a.get("status") == "CONNECTED"}
-        use_outlook = "outlook" in on and "gmail" not in on
+        chosen = rows("select value from settings where key = 'primary_mail_account' limit 1")
+        kind, _, acct = ((chosen[0].get("value") if chosen else "") or "").partition(":")
+        if kind in ("gmail", "outlook") and acct:
+            use_outlook, use = kind == "outlook", {"account_id": acct}
+        else:
+            st = pod.connectors.status()
+            on = {str(a.get("connector_id") or "").lower()
+                  for a in (st.get("connected_accounts") or st.get("accounts") or [])
+                  if isinstance(a, dict) and a.get("status") == "CONNECTED"}
+            use_outlook = "outlook" in on and "gmail" not in on
     except Exception:
         pass
 
@@ -109,14 +117,14 @@ async def send_brief_email(ctx: FunctionContext, data: SendBriefInput) -> SendBr
             pod.connectors.execute("outlook", "OUTLOOK_SEND_EMAIL", {
                 "to": me, "subject": res.subject, "body": _md_to_html(body),
                 "is_html": True, "user_id": "me",
-            })
+            }, **use)
         else:
             pod.connectors.execute("gmail", "GMAIL_SEND_EMAIL", {
                 "recipient_email": me,
                 "subject": res.subject,
                 "body": _md_to_html(body),
                 "is_html": True,
-            })
+            }, **use)
         res.sent = True
         res.reason = "sent"
     except Exception as exc:

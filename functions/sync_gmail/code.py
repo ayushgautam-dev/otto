@@ -26,6 +26,7 @@ class SyncGmailInput(BaseModel):
     message_ids: list[str] | None = None     # set by the webhook path for a single new mail
     body_chars: int = 20000
     batch_size: int = 15
+    account_id: str | None = None            # one account only; omit to read every Gmail of mine
 
 
 class SyncGmailResult(BaseModel):
@@ -35,6 +36,7 @@ class SyncGmailResult(BaseModel):
     skipped_duplicate: int = 0
     files_written: int = 0
     errors: list[str] = []
+    accounts: int = 0                        # how many of my Gmail accounts were read
 
 
 def _addr(raw: str) -> tuple[str, str]:
@@ -66,6 +68,46 @@ def _iso(ts: str) -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+
+# ---- Which accounts are mine. ----
+# A person may connect several mailboxes (two Gmails, a Gmail and an Outlook). Connected
+# accounts belong to the organisation, so everything here is narrowed to the accounts
+# of the person this run is for: nobody's run may ever touch somebody else's mailbox.
+
+def _items(x) -> list:
+    x = x.to_dict() if hasattr(x, "to_dict") else x
+    return x.get("items", []) if isinstance(x, dict) else (x or [])
+
+
+def _my_accounts(pod, ctx, connector: str) -> list[dict]:
+    """My connected accounts for one connector: [{id, email}], the default one first."""
+    uid = str(getattr(ctx, "user_id", "") or "")
+    out = []
+    if not uid:
+        # without knowing who this run is for, nothing can be called "mine": the caller
+        # falls back to the workspace default rather than reading every mailbox in it
+        return out
+    try:
+        for a in _items(pod.connectors.accounts.list()):
+            if a.get("status") != "CONNECTED" or str(a.get("connector_id") or "").lower() != connector:
+                continue
+            if str(a.get("user_id") or "") != uid:
+                continue
+            out.append({"id": str(a.get("id")), "email": (a.get("email") or "").strip().lower(),
+                        "default": bool(a.get("is_default"))})
+    except Exception:
+        return []
+    return sorted(out, key=lambda a: not a["default"])
+
+
+def _my_addresses(pod, ctx) -> set[str]:
+    """Every address that is me, across all my mailboxes."""
+    mine = {(getattr(ctx, "user_email", "") or "").strip().lower()}
+    for c in ("gmail", "outlook"):
+        mine |= {a["email"] for a in _my_accounts(pod, ctx, c)}
+    return {m for m in mine if m}
+
+
 async def sync_gmail(ctx: FunctionContext, data: SyncGmailInput) -> SyncGmailResult:
     pod = Pod.from_env()
     res = SyncGmailResult()
@@ -76,48 +118,64 @@ async def sync_gmail(ctx: FunctionContext, data: SyncGmailInput) -> SyncGmailRes
         "-category:promotions -category:social -category:forums"
     )
 
-    raw: list[dict] = []
-    if data.message_ids:
-        for mid in data.message_ids[:50]:
-            try:
-                r = pod.connectors.execute(
-                    "gmail", "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
-                    {"message_id": mid, "format": "full"}).to_dict()
-                r = r.get("result", r)
-                raw.append(r.get("data", r))
-            except Exception as exc:
-                res.errors.append(f"{mid}: {exc}")
-    else:
-        page_token, guard = None, 0
-        while len(raw) < data.max_messages and guard < 40:
-            guard += 1
-            payload = {
-                "query": query,
-                "max_results": min(50, data.max_messages - len(raw)),
-                "verbose": True,
-                "include_spam_trash": False,
-            }
-            if page_token:
-                payload["page_token"] = page_token
-            try:
-                resp = pod.connectors.execute("gmail", "GMAIL_FETCH_EMAILS", payload).to_dict()
-            except Exception as exc:
-                res.errors.append(str(exc))
-                break
-            r = resp.get("result", resp)
-            body = r.get("data", r) if isinstance(r, dict) else {}
-            msgs = body.get("messages") or r.get("messages") or []
-            raw.extend(msgs)
-            page_token = body.get("nextPageToken") or r.get("nextPageToken")
-            if not page_token or not msgs:
-                break
+    # Every Gmail of mine, or just the one asked for. With none listed (an older pod, or
+    # accounts that could not be read) fall back to the workspace's default account.
+    mine = _my_addresses(pod, ctx)
+    accounts = _my_accounts(pod, ctx, "gmail")
+    if data.account_id:
+        accounts = [a for a in accounts if a["id"] == data.account_id] or [{"id": data.account_id, "email": ""}]
+    if not accounts:
+        accounts = [{"id": "", "email": me}]
+
+    res.accounts = len([a for a in accounts if a["id"]])
+    raw: list[tuple[dict, dict]] = []
+    for acct in accounts:
+        use = {"account_id": acct["id"]} if acct["id"] else {}
+        got: list[dict] = []
+        if data.message_ids:
+            for mid in data.message_ids[:50]:
+                try:
+                    r = pod.connectors.execute(
+                        "gmail", "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
+                        {"message_id": mid, "format": "full"}, **use).to_dict()
+                    r = r.get("result", r)
+                    got.append(r.get("data", r))
+                except Exception as exc:
+                    res.errors.append(f"{mid}: {exc}")
+        else:
+            page_token, guard = None, 0
+            while len(got) < data.max_messages and guard < 40:
+                guard += 1
+                payload = {
+                    "query": query,
+                    "max_results": min(50, data.max_messages - len(got)),
+                    "verbose": True,
+                    "include_spam_trash": False,
+                }
+                if page_token:
+                    payload["page_token"] = page_token
+                try:
+                    resp = pod.connectors.execute("gmail", "GMAIL_FETCH_EMAILS", payload, **use).to_dict()
+                except Exception as exc:
+                    res.errors.append(str(exc))
+                    break
+                r = resp.get("result", resp)
+                body = r.get("data", r) if isinstance(r, dict) else {}
+                msgs = body.get("messages") or r.get("messages") or []
+                got.extend(msgs)
+                page_token = body.get("nextPageToken") or r.get("nextPageToken")
+                if not page_token or not msgs:
+                    break
+
+        raw += [(m, acct) for m in got]
 
     res.fetched = len(raw)
 
     interactions: list[dict] = []
-    for m in raw:
+    for m, acct in raw:
         if not isinstance(m, dict):
             continue
+        me = acct.get("email") or me
         gmail_id = m.get("messageId") or m.get("id")
         # RFC Message-ID is stable across mailboxes; the Gmail id is only stable here.
         ext = (m.get("rfc822MessageId") or m.get("messageId") or gmail_id or "").strip()
@@ -127,7 +185,7 @@ async def sync_gmail(ctx: FunctionContext, data: SyncGmailInput) -> SyncGmailRes
         from_name, from_email = _addr(m.get("sender", ""))
         to_addrs, cc_addrs = _split(m.get("to", "")), _split(m.get("cc", ""))
         labels = m.get("labelIds") or []
-        outbound = "SENT" in labels or (me and from_email == me)
+        outbound = "SENT" in labels or from_email in mine or (me and from_email == me)
 
         # Who is this with? For mail I sent, the counterparty is the first recipient.
         counterpart = ""
@@ -135,6 +193,10 @@ async def sync_gmail(ctx: FunctionContext, data: SyncGmailInput) -> SyncGmailRes
             counterpart = next((a for a in to_addrs if a != me), "")
         else:
             counterpart = from_email if from_email != me else ""
+
+        # a note between my own mailboxes is not a conversation with anybody
+        if counterpart in mine:
+            continue
 
         body_text = (m.get("messageText") or (m.get("preview") or {}).get("body") or "").strip()
 
@@ -147,13 +209,14 @@ async def sync_gmail(ctx: FunctionContext, data: SyncGmailInput) -> SyncGmailRes
             "source": "gmail",
             "external_id": ext,
             "thread_ref": m.get("threadId") or ext,
+            "account_id": acct.get("id") or None,
             "occurred_at": _iso(m.get("messageTimestamp", "")),
             "subject": (m.get("subject") or "(no subject)").strip(),
             "body": body_text[: data.body_chars],
             "direction": "outbound" if outbound else "inbound",
             # Copied-in threads become context, never obligations. The extractor is
             # told to respect this flag rather than re-deriving it.
-            "addressed_to_me": bool(outbound or (me and me in to_addrs) or not me),
+            "addressed_to_me": bool(outbound or any(a in mine for a in to_addrs) or not me),
             "person_email": counterpart,
             "company_domain": counterpart.split("@")[-1] if "@" in counterpart else None,
             "participants": participants,

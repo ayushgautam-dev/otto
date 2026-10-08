@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ExternalLink, Paperclip, ChevronDown } from 'lucide-react'
 import { runFn } from './lib'
+import { useThreadAccount } from './accounts'
 import { Avatar } from './ui'
 
 /* The email conversation behind an item, fetched through `get_email_thread` exactly as
@@ -12,6 +13,9 @@ interface ThreadMsg { id: string; from_name: string; from_email: string; date: s
 const cache = new Map<string, { subject: string; messages: ThreadMsg[] }>()
 
 export function Conversation({ threadRef }: { threadRef: string }) {
+  // which of the person's mailboxes this conversation lives in (undefined until known)
+  const account = useThreadAccount(threadRef)
+  const accountId = account?.id ?? ''
   const [data, setData] = useState(cache.get(threadRef) ?? null)
   const [err, setErr] = useState('')
   const [openIds, setOpenIds] = useState<Set<string> | null>(null)
@@ -20,8 +24,9 @@ export function Conversation({ threadRef }: { threadRef: string }) {
 
   useEffect(() => {
     let live = true
+    setErr('')
     if (cache.has(threadRef)) { setData(cache.get(threadRef)!); return }
-    runFn<{ subject?: string; messages?: ThreadMsg[]; error?: string }>('get_email_thread', { thread_id: threadRef })
+    runFn<{ subject?: string; messages?: ThreadMsg[]; error?: string }>('get_email_thread', { thread_id: threadRef, account_id: accountId || null })
       .then((out) => {
         if (!live) return
         if (out.error && !out.messages?.length) { setErr(out.error); return }
@@ -30,7 +35,7 @@ export function Conversation({ threadRef }: { threadRef: string }) {
       })
       .catch((e) => { if (live) setErr((e as Error)?.message || 'Could not open the conversation') })
     return () => { live = false }
-  }, [threadRef])
+  }, [threadRef, accountId])
 
   const total = data?.messages.length ?? 0
   const files = data?.messages.reduce((n, m) => n + (m.attachments?.length ?? 0), 0) ?? 0
@@ -41,7 +46,7 @@ export function Conversation({ threadRef }: { threadRef: string }) {
     const win = window.open('', '_blank')   // opened on the click; one opened after an await is blocked
     try {
       const out = await runFn<{ content_base64?: string; mime?: string; error?: string }>('get_email_attachment', {
-        message_id: m.id, attachment_id: a.attachment_id, file_name: a.filename })
+        message_id: m.id, attachment_id: a.attachment_id, file_name: a.filename, account_id: accountId || null })
       if (!out.content_base64) { win?.close(); setErr(out.error || 'Could not open the attachment'); return }
       const bytes = Uint8Array.from(atob(out.content_base64), (c) => c.charCodeAt(0))
       const url = URL.createObjectURL(new Blob([bytes], { type: a.mime || out.mime || 'application/octet-stream' }))

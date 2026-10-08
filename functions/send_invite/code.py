@@ -23,6 +23,10 @@ class SendInviteInput(BaseModel):
     timezone: str = "Asia/Kolkata"
     attendees: list[str] = []
     description: str | None = None
+    # which calendar the invite goes on, when the person has more than one:
+    # the connected account's id, and "google" or "outlook"
+    account_id: str | None = None
+    provider: str | None = None
 
 
 class SendInviteResult(BaseModel):
@@ -67,7 +71,9 @@ async def send_invite(ctx: FunctionContext, data: SendInviteInput) -> SendInvite
         return res
 
     mins = max(5, min(int(data.duration_min or 30), 8 * 60))
-    if _calendar_is_outlook(pod):
+    use = {"account_id": data.account_id} if (data.account_id or "").strip() else {}
+    provider = (data.provider or "").strip().lower()
+    if provider == "outlook" or (not provider and _calendar_is_outlook(pod)):
         from datetime import timedelta
         o_args = {
             "subject": data.title.strip() or "Meeting",
@@ -81,7 +87,7 @@ async def send_invite(ctx: FunctionContext, data: SendInviteInput) -> SendInvite
         if data.description:
             o_args["body"] = data.description
         try:
-            out = pod.connectors.execute("outlook", "OUTLOOK_CALENDAR_CREATE_EVENT", o_args)
+            out = pod.connectors.execute("outlook", "OUTLOOK_CALENDAR_CREATE_EVENT", o_args, **use)
             out = out.to_dict() if hasattr(out, "to_dict") else out
         except Exception as exc:
             res.error = f"Calendar refused the invite: {str(exc)[:200]}"
@@ -106,7 +112,7 @@ async def send_invite(ctx: FunctionContext, data: SendInviteInput) -> SendInvite
     if data.description:
         args["description"] = data.description
     try:
-        out = pod.connectors.execute("google_calendar", "GOOGLECALENDAR_CREATE_EVENT", args)
+        out = pod.connectors.execute("google_calendar", "GOOGLECALENDAR_CREATE_EVENT", args, **use)
     except Exception as exc:
         res.error = f"Calendar refused the invite: {str(exc)[:200]}"
         return res

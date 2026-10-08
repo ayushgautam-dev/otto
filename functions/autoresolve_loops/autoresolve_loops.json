@@ -47,6 +47,14 @@
         ],
         "resource_name": "loops",
         "resource_type": "datastore_table"
+      },
+      {
+        "permission_ids": [
+          "datastore.record.read",
+          "datastore.table.read"
+        ],
+        "resource_name": "interactions",
+        "resource_type": "datastore_table"
       }
     ]
   },

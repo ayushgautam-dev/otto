@@ -69,6 +69,9 @@ INSTALL = {
 
 class ConnectInput(BaseModel):
     app: str
+    # True to connect one more account of a source that is already connected
+    # (a second Gmail, say). Without it an existing account answers "already connected".
+    add_another: bool = False
 
 
 class ConnectResult(BaseModel):
@@ -98,14 +101,17 @@ def _find_install(pod, want: str) -> dict | None:
     return None
 
 
-def _has_account(pod, auth_config_id: str) -> bool:
-    """Is there a live account against this exact install?"""
+def _has_account(pod, auth_config_id: str, user_id: str = "") -> bool:
+    """Is there a live account of MINE against this exact install? Accounts belong to the
+    organisation, so somebody else's Gmail must never count as my being connected."""
     if not auth_config_id:
         return False
     try:
         accts = pod.connectors.accounts.list().to_dict()
         for a in (accts.get("items") or []):
             if str(a.get("auth_config_id")) != auth_config_id:
+                continue
+            if user_id and str(a.get("user_id") or "") != user_id:
                 continue
             if str(a.get("status") or "").upper() == "CONNECTED":
                 return True
@@ -129,7 +135,8 @@ async def connect_source(ctx: FunctionContext, data: ConnectInput) -> ConnectRes
     # connected Granola was sent round the sign-in loop a second time. The account's
     # auth_config_id is the only thing that actually identifies which install it
     # belongs to.
-    if cfg is not None and _has_account(pod, str(cfg.get("id") or "")):
+    if cfg is not None and not data.add_another and _has_account(
+            pod, str(cfg.get("id") or ""), str(getattr(ctx, "user_id", "") or "")):
         res.already_connected = True
         res.status = "already connected"
         return res

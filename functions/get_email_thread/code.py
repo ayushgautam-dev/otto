@@ -17,6 +17,9 @@ from lemma_sdk import FunctionContext, Pod
 
 class GetThreadInput(BaseModel):
     thread_id: str
+    # the account the conversation lives in, when the person has more than one mailbox;
+    # the app reads it off the row. Empty means the workspace default.
+    account_id: str | None = None
 
 
 class Attachment(BaseModel):
@@ -90,19 +93,19 @@ def _o_unwrap(resp) -> dict:
     return d if isinstance(d, dict) else {}
 
 
-def _o_conversation(pod, conv: str, detail: str = "minimal") -> list[dict]:
+def _o_conversation(pod, conv: str, detail: str = "minimal", use: dict | None = None) -> list[dict]:
     """Every message in one Outlook conversation, across folders, oldest first."""
     body = _o_unwrap(pod.connectors.execute("outlook", "OUTLOOK_LIST_MESSAGES", {
         "folder": "allfolders", "top": 50, "response_detail": detail,
         "filter": "conversationId eq '" + conv.replace("'", "''") + "'",
-    }))
+    }, **(use or {})))
     msgs = [m for m in (body.get("value") or []) if not m.get("isDraft")]
     return sorted(msgs, key=lambda m: m.get("receivedDateTime") or m.get("sentDateTime") or "")
 
 
-def _o_me(pod) -> str:
+def _o_me(pod, use: dict | None = None) -> str:
     try:
-        p = _o_unwrap(pod.connectors.execute("outlook", "OUTLOOK_GET_PROFILE", {"user_id": "me"}))
+        p = _o_unwrap(pod.connectors.execute("outlook", "OUTLOOK_GET_PROFILE", {"user_id": "me"}, **(use or {})))
         return (p.get("mail") or p.get("userPrincipalName") or "").strip().lower()
     except Exception:
         return ""
@@ -119,20 +122,20 @@ def _o_text(body: dict | None, preview: str = "") -> str:
     return re.sub(r"\n\s*\n\s*\n+", "\n\n", content).strip() or (preview or "").strip()
 
 
-def _outlook_thread(pod, conv: str, res: "GetThreadResult") -> "GetThreadResult":
+def _outlook_thread(pod, conv: str, res: "GetThreadResult", use: dict) -> "GetThreadResult":
     try:
-        msgs = _o_conversation(pod, conv, "full")
+        msgs = _o_conversation(pod, conv, "full", use)
     except Exception as exc:
         res.error = f"Outlook would not open it: {str(exc)[:160]}"
         return res
-    me = _o_me(pod)
+    me = _o_me(pod, use)
     for m in msgs:
         f = (m.get("from") or m.get("sender") or {}).get("emailAddress") or {}
         email = (f.get("address") or "").lower()
         atts = []
         if m.get("hasAttachments"):
             try:
-                a = _o_unwrap(pod.connectors.execute("outlook", "OUTLOOK_LIST_OUTLOOK_ATTACHMENTS", {"message_id": m.get("id")}))
+                a = _o_unwrap(pod.connectors.execute("outlook", "OUTLOOK_LIST_OUTLOOK_ATTACHMENTS", {"message_id": m.get("id")}, **use))
                 atts = [Attachment(filename=x.get("name") or "file", mime=x.get("contentType") or "", attachment_id=x.get("id") or "")
                         for x in (a.get("value") or []) if x.get("id") and x.get("name") and not x.get("isInline")]
             except Exception:
@@ -159,13 +162,14 @@ async def get_email_thread(ctx: FunctionContext, data: GetThreadInput) -> GetThr
     pod = Pod.from_env()
     res = GetThreadResult()
     tid = (data.thread_id or "").strip()
+    use = {"account_id": data.account_id} if (data.account_id or "").strip() else {}
     if tid.startswith("outlook:"):
-        return _outlook_thread(pod, tid[8:], res)
+        return _outlook_thread(pod, tid[8:], res, use)
     if not re.fullmatch(r"[0-9a-f]{10,24}", tid):
         res.error = "not an email conversation"
         return res
     try:
-        resp = pod.connectors.execute("gmail", "GMAIL_FETCH_MESSAGE_BY_THREAD_ID", {"thread_id": tid})
+        resp = pod.connectors.execute("gmail", "GMAIL_FETCH_MESSAGE_BY_THREAD_ID", {"thread_id": tid}, **use)
         resp = resp.to_dict() if hasattr(resp, "to_dict") else resp
     except Exception as exc:
         res.error = f"Gmail would not open it: {str(exc)[:160]}"

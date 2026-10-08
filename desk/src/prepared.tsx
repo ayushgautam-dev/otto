@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { X, Plus, Download, Copy, ExternalLink, FileText, CalendarPlus, Send, Check, Video, Clock } from 'lucide-react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { useSql, records, runFn, rev, lit, isGmailThread } from './lib'
+import { useSql, records, runFn, rev, lit, isGmailThread, isOutlookThread } from './lib'
+import { useAccounts, useThreadAccount, accountLabel } from './accounts'
 import { Avatar, Markdown, Orb, useToast } from './ui'
 import { useNav } from './nav'
 import { tm } from './teammate'
@@ -229,6 +230,15 @@ export function Letter({ draft, onSent, docs = [] }: { draft: DraftRow; onSent?:
   useEffect(() => { setAttach(docs.map((d) => d.id)) }, [docs.map((d) => d.id).join(',')])
   const area = useRef<HTMLTextAreaElement>(null)
   const isReply = isGmailThread(draft.thread_ref)
+  /* Which mailbox it leaves from. A reply goes from the mailbox its conversation is in;
+     new mail from the primary, unless the person picks another. Shown only when they
+     have more than one. */
+  const accounts = useAccounts()
+  const threadAccount = useThreadAccount(isReply ? draft.thread_ref : null)
+  const [fromId, setFromId] = useState<string | null>(null)
+  const from = isReply
+    ? threadAccount ?? (isOutlookThread(draft.thread_ref) ? accounts.mail.find((a) => a.provider === 'outlook') ?? null : null)
+    : accounts.mail.find((a) => a.id === fromId) ?? accounts.primary
   const who = draft.person || to[0] || ''
 
   useEffect(() => {
@@ -245,6 +255,7 @@ export function Letter({ draft, onSent, docs = [] }: { draft: DraftRow; onSent?:
         draft_id: draft.id, subject, body,
         to_email: to[0], extra_to: to.slice(1), cc, thread_ref: draft.thread_ref ?? '',
         to_name: draft.person ?? '',
+        account_id: from?.id ?? null, provider: from?.provider ?? null,
         appendix_html: docs.filter((d) => attach.includes(d.id)).map(docAsHtml).join('<hr style="margin:24px 0">') || null,
       })
       if (!out?.sent) {
@@ -279,6 +290,18 @@ export function Letter({ draft, onSent, docs = [] }: { draft: DraftRow; onSent?:
         <span className="letter-k">{isReply ? 'Reply' : 'New email'}</span>
         {!showCc && <button className="link-q" onClick={() => setShowCc(true)}>Cc</button>}
       </div>
+      {accounts.multi && from && (
+        <div className="letter-from">
+          <span className="letter-from-k">From</span>
+          {isReply
+            ? <span>{accountLabel(from)}</span>
+            : (
+              <select value={from.id} onChange={(e) => setFromId(e.target.value)} aria-label="Send from">
+                {accounts.mail.map((a) => <option key={a.id} value={a.id}>{accountLabel(a)}</option>)}
+              </select>
+            )}
+        </div>
+      )}
       <Recipients label="To" emails={to} onChange={setTo} />
       {showCc && <Recipients label="Cc" emails={cc} onChange={setCc} />}
       {isReply

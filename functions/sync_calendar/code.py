@@ -38,6 +38,46 @@ def _name_from(email: str) -> str:
     return local.replace(".", " ").replace("_", " ").title()
 
 
+
+# ---- Which accounts are mine. ----
+# A person may connect several mailboxes (two Gmails, a Gmail and an Outlook). Connected
+# accounts belong to the organisation, so everything here is narrowed to the accounts
+# of the person this run is for: nobody's run may ever touch somebody else's mailbox.
+
+def _items(x) -> list:
+    x = x.to_dict() if hasattr(x, "to_dict") else x
+    return x.get("items", []) if isinstance(x, dict) else (x or [])
+
+
+def _my_accounts(pod, ctx, connector: str) -> list[dict]:
+    """My connected accounts for one connector: [{id, email}], the default one first."""
+    uid = str(getattr(ctx, "user_id", "") or "")
+    out = []
+    if not uid:
+        # without knowing who this run is for, nothing can be called "mine": the caller
+        # falls back to the workspace default rather than reading every mailbox in it
+        return out
+    try:
+        for a in _items(pod.connectors.accounts.list()):
+            if a.get("status") != "CONNECTED" or str(a.get("connector_id") or "").lower() != connector:
+                continue
+            if str(a.get("user_id") or "") != uid:
+                continue
+            out.append({"id": str(a.get("id")), "email": (a.get("email") or "").strip().lower(),
+                        "default": bool(a.get("is_default"))})
+    except Exception:
+        return []
+    return sorted(out, key=lambda a: not a["default"])
+
+
+def _my_addresses(pod, ctx) -> set[str]:
+    """Every address that is me, across all my mailboxes."""
+    mine = {(getattr(ctx, "user_email", "") or "").strip().lower()}
+    for c in ("gmail", "outlook"):
+        mine |= {a["email"] for a in _my_accounts(pod, ctx, c)}
+    return {m for m in mine if m}
+
+
 async def sync_calendar(ctx: FunctionContext, data: SyncCalendarInput) -> SyncCalendarResult:
     pod = Pod.from_env()
     res = SyncCalendarResult()
@@ -47,18 +87,25 @@ async def sync_calendar(ctx: FunctionContext, data: SyncCalendarInput) -> SyncCa
     tmin = (now - timedelta(days=data.past_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     tmax = (now + timedelta(days=data.future_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    try:
-        resp = pod.connectors.execute("google_calendar", "GOOGLECALENDAR_EVENTS_LIST", {
-            "calendarId": "primary", "timeMin": tmin, "timeMax": tmax,
-            "maxResults": data.max_events, "singleEvents": True, "orderBy": "startTime",
-        }).to_dict()
-    except Exception as exc:
-        res.errors.append(str(exc)[:200])
-        return res
-
-    r = resp.get("result", resp)
-    body = r.get("data", r) if isinstance(r, dict) else {}
-    items = body.get("items") or r.get("items") or []
+    # every Google calendar of mine; with none listed, the workspace default as before
+    mine = _my_addresses(pod, ctx)
+    accounts = _my_accounts(pod, ctx, "google_calendar") or [{"id": "", "email": ""}]
+    items: list[dict] = []
+    for acct in accounts:
+        use = {"account_id": acct["id"]} if acct["id"] else {}
+        try:
+            resp = pod.connectors.execute("google_calendar", "GOOGLECALENDAR_EVENTS_LIST", {
+                "calendarId": "primary", "timeMin": tmin, "timeMax": tmax,
+                "maxResults": data.max_events, "singleEvents": True, "orderBy": "startTime",
+            }, **use).to_dict()
+        except Exception as exc:
+            res.errors.append(str(exc)[:200])
+            continue
+        r = resp.get("result", resp)
+        body = r.get("data", r) if isinstance(r, dict) else {}
+        for ev in (body.get("items") or r.get("items") or []):
+            ev["_account"] = acct["id"]
+            items.append(ev)
     res.fetched = len(items)
 
     interactions: list[dict] = []
@@ -72,7 +119,7 @@ async def sync_calendar(ctx: FunctionContext, data: SyncCalendarInput) -> SyncCa
         attendees = []
         for a in (ev.get("attendees") or []):
             em = (a.get("email") or "").strip().lower()
-            if not em or em == me or a.get("resource"):
+            if not em or em == me or em in mine or a.get("resource"):
                 continue
             attendees.append({"email": em, "name": a.get("displayName") or _name_from(em),
                               "role": "attendee"})
@@ -100,6 +147,7 @@ async def sync_calendar(ctx: FunctionContext, data: SyncCalendarInput) -> SyncCa
             "source": "calendar",
             "external_id": f"gcal:{ev['id']}",
             "thread_ref": ev.get("recurringEventId") or f"gcal:{ev['id']}",
+            "account_id": ev.get("_account") or None,
             "occurred_at": start,
             "subject": title,
             "body": "\n".join(lines),

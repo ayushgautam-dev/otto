@@ -14,6 +14,7 @@ import { Board, boardSql, type BoardRow } from './board'
 import { WeatherMark } from '../weather'
 import { useCatching } from '../backfill'
 import { useTeammate, tm } from '../teammate'
+import { useAccounts, accountLabel, resolveAccount } from '../accounts'
 
 /* Today — read once, top to bottom, then get on with the day.
 
@@ -233,6 +234,7 @@ const PERSONAL = /@(gmail|googlemail|yahoo|outlook|hotmail|icloud|me|proton|prot
 interface OpenRow extends LoopRow {
   person_email?: string | null; role?: string | null; relationship?: string | null
   company_id?: string | null; company?: string | null; company_domain?: string | null
+  account_id?: string | null
 }
 
 /** Where a person belongs — the same rule as the old app's People/Companies lenses: someone
@@ -439,14 +441,18 @@ export function Today({ userName }: { userName: string }) {
             l.urgency, l.urgency_reason, l.thread_ref, l.person_id, l.work_project_id, l.situation_id, l.due_at,
             coalesce(p.name,'') as person, p.avatar_url, p.email as person_email, p.role, p.relationship,
             p.company_id, coalesce(c.name,'') as company, c.domain as company_domain,
-            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft
+            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft,
+            (select i.account_id from interactions i where i.thread_ref=l.thread_ref and i.account_id is not null limit 1) as account_id
      from loops l left join people p on p.id=l.person_id
      left join companies c on c.id=p.company_id
      where l.status='open'
      order by coalesce(l.urgency,2) asc, l.opened_at asc nulls last`, version))
 
   const loading = sits.isLoading || loops.isLoading
-  const all = loops.items
+  // one desk for every mailbox; with more than one, it can be narrowed to a single mailbox
+  const accounts = useAccounts()
+  const [mailbox, setMailbox] = useState<string>('')
+  const all = mailbox && accounts.multi ? loops.items.filter((l) => resolveAccount(l.thread_ref, l.account_id, accounts.mail)?.id === mailbox) : loops.items
   const mine = all.filter((l) => l.side === 'you').length
   const theirs = all.length - mine
   const shown = filter === 'all' ? all : all.filter((l) => (filter === 'you') === (l.side === 'you'))
@@ -476,13 +482,19 @@ export function Today({ userName }: { userName: string }) {
     <div className="page today">
       <Masthead name={userName} />
 
-      {!loading && all.length > 0 && (
+      {!loading && loops.items.length > 0 && (
         <div className="tally">
           <Chip f="you" n={mine} label="on you" />
           <span className="tally-sep">·</span>
           <Chip f="them" n={theirs} label="waiting on others" />
           {filter !== 'all' && <button className="link-q" onClick={() => setFilter('all')}>Show all</button>}
           <span className="grow" />
+          {accounts.multi && (
+            <select className="mailbox-pick" value={mailbox} onChange={(e) => setMailbox(e.target.value)} aria-label="Mailbox">
+              <option value="">All mailboxes</option>
+              {accounts.mail.map((a) => <option key={a.id} value={a.id}>{accountLabel(a)}</option>)}
+            </select>
+          )}
           <span className="groupby" role="radiogroup" aria-label="Group by">
             <span className="groupby-k">by</span>
             {(['topic', 'person', 'company'] as Group[]).map((g) => (

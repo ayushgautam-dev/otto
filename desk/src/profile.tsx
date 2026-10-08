@@ -4,6 +4,7 @@ import { client, runFn } from './lib'
 import { Avatar, useToast } from './ui'
 import { SourceMark } from './brand'
 import { tm } from './teammate'
+import { useAccounts, accountLabel, type Provider } from './accounts'
 
 /* You: who is signed in, and every app Lem works with — what's connected, what isn't,
    and a few worth adding.
@@ -24,6 +25,7 @@ interface App { id: string; label: string; why: string; via: 'pod' | 'native'; c
 const SOURCES: App[] = [
   { id: 'gmail', label: 'Gmail', why: 'Threads, who spoke last, and what was asked of you.', via: 'pod' },
   { id: 'google_calendar', label: 'Google Calendar', why: 'Who you’re meeting, and what was agreed but never booked.', via: 'pod' },
+  { id: 'outlook', label: 'Outlook', why: 'Mail and calendar, for work that lives in Microsoft 365.', via: 'pod' },
   { id: 'granola', label: 'Granola', why: 'Meeting notes and action items — where a promise made out loud gets written down.', via: 'pod' },
   { id: 'googlemeet', label: 'Google Meet', why: 'Call transcripts, where Meet recorded one.', via: 'pod' },
   { id: 'slack', label: 'Slack', why: 'The channels you invited the app to, where the day’s asks land.', via: 'native', connector: 'slack' },
@@ -37,7 +39,6 @@ const OUTPUTS: App[] = [
 const SUGGESTED: App[] = [
   { id: 'zoom', label: 'Zoom', why: 'Calls outside Google Meet — where half the promises are made out loud.', via: 'native', connector: 'zoom' },
   { id: 'calendly', label: 'Calendly', why: 'Offer your booking link instead of trading times by email.', via: 'native', connector: 'calendly' },
-  { id: 'outlook', label: 'Outlook', why: 'Mail and calendar for anyone on Microsoft 365 instead of Google.', via: 'native', connector: 'outlook' },
 ]
 
 type Status = 'connected' | 'reauth' | 'off'
@@ -94,6 +95,7 @@ export function Profile({ name, email, onClose }: { name: string; email: string;
   const [status, setStatus] = useState<Record<string, Status> | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [dark, setDark] = useState(() => document.documentElement.getAttribute('data-theme') === 'dark')
+  const accounts = useAccounts()
 
   const load = useCallback(async (o = org) => {
     if (!o) return
@@ -149,6 +151,34 @@ export function Profile({ name, email, onClose }: { name: string; email: string;
     }
   }
 
+  /** One more mailbox of a kind that is already connected: a second Gmail, say. */
+  async function addMailbox(kind: Provider) {
+    if (busy) return
+    setBusy(`add:${kind}`)
+    const had = accounts.mail.length
+    const win = window.open('', '_blank', 'width=520,height=680')
+    try {
+      const out = await runFn<{ auth_url?: string; authorization_url?: string; explanation?: string }>('connect_source', { app: kind, add_another: true })
+      const url = out.auth_url || out.authorization_url
+      if (!url) { win?.close(); toast(out.explanation || 'That could not be started'); return }
+      if (win) win.location.href = url
+      else { toast('Your browser blocked the sign-in window. Allow pop-ups and try again'); return }
+      for (let i = 0; i < 90; i++) {
+        await sleep(2000)
+        await accounts.refresh()
+        const now = await runFn<{ sources?: { app: string; accounts?: unknown[] }[] }>('sources_status', {})
+        const n = (now.sources ?? []).filter((s) => s.app === 'gmail' || s.app === 'outlook').reduce((t, s) => t + (s.accounts?.length ?? 0), 0)
+        if (n > had) { toast('Mailbox added. Its last three weeks are loading'); await accounts.refresh(); return }
+      }
+      toast('Still waiting on that one. Press refresh once you’ve signed in')
+    } catch (e) {
+      win?.close()
+      toast(`Couldn’t start that: ${(e as Error)?.message ?? 'try again'}`)
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const toggleTheme = () => {
     const n = dark ? 'light' : 'dark'
     document.documentElement.setAttribute('data-theme', n)
@@ -185,6 +215,29 @@ export function Profile({ name, email, onClose }: { name: string; email: string;
                 {tm()} is reading <b>{reading}</b> of {SOURCES.length} sources
                 {SOURCES.some((a) => status[a.id] === 'reauth') && <> · <span className="warn">one needs you to sign in again</span></>}
               </p>
+              {accounts.mail.length > 0 && (
+                <section className="profile-sec">
+                  <div className="sec-h">Your mailboxes</div>
+                  <div className="acct-list">
+                    {accounts.mail.map((a) => (
+                      <div key={a.id} className="acct">
+                        <SourceMark app={a.provider} />
+                        <div className="acct-t">
+                          <b>{accountLabel(a)}</b>
+                          <small>{a.provider === 'gmail' ? 'Gmail' : 'Outlook'}</small>
+                        </div>
+                        {accounts.multi && (accounts.primary?.id === a.id
+                          ? <span className="acct-primary" title="New mail and your morning brief go out from here">Primary</span>
+                          : <button className="btn sm line" onClick={() => void accounts.setPrimary(a)}>Make primary</button>)}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="acct-add">
+                    <button className="btn sm line" disabled={!!busy} onClick={() => void addMailbox('gmail')}>{busy === 'add:gmail' ? 'Waiting for sign-in…' : 'Add a Gmail'}</button>
+                    <button className="btn sm line" disabled={!!busy} onClick={() => void addMailbox('outlook')}>{busy === 'add:outlook' ? 'Waiting for sign-in…' : 'Add an Outlook'}</button>
+                  </div>
+                </section>
+              )}
               {sections.map((sec) => {
                 // connected first, then what still needs doing
                 const apps = [...sec.apps].sort((a, b) => Number(on(b)) - Number(on(a)))

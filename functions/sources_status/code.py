@@ -45,6 +45,8 @@ class SourceOut(BaseModel):
     self_installable: bool = False
     connected: bool = False
     account_label: str | None = None
+    # every account of mine for this source: [{id, email, default}]
+    accounts: list[dict] = Field(default_factory=list)
 
 
 class SourcesResult(BaseModel):
@@ -63,51 +65,37 @@ async def sources_status(ctx: FunctionContext, data: SourcesInput) -> SourcesRes
     pod = Pod.from_env()
     res = SourcesResult()
 
+    # Accounts belong to the organisation. Only MY accounts count: a teammate's Gmail
+    # must never make me look connected, nor be the mailbox my runs read.
+    uid = str(getattr(ctx, "user_id", "") or "")
     installed: set[str] = set()
-    accounts: dict[str, str] = {}
-    by_account_id: dict[str, str] = {}
-    try:
-        st = pod.connectors.status()
-        # An MCP install is named by its auth config, not its connector id: Granola and a
-        # transcript server both report connector_id "mcp". Indexing on connector_id alone
-        # filed Granola under "mcp" and left it looking permanently disconnected.
-        for a in (st.get("installed_apps") or st.get("apps") or []):
-            if not isinstance(a, dict):
-                continue
-            for k in ("connector_id", "auth_config_name", "name"):
-                v = a.get(k)
-                if v:
-                    installed.add(str(v).lower())
-        for a in (st.get("connected_accounts") or st.get("accounts") or []):
-            if not isinstance(a, dict) or a.get("status") != "CONNECTED":
-                continue
-            label = a.get("display_name") or a.get("email") or ""
-            cid = str(a.get("connector_id") or "").lower()
-            if cid:
-                accounts.setdefault(cid, label)
-            by_account_id[str(a.get("id"))] = label
-
-    except Exception as exc:
-        res.errors.append(f"connector status unavailable: {str(exc)[:160]}")
-
-    # `status()` names an account only by connector_id, and every MCP server shares the
-    # id "mcp" — so Granola and the transcript server are indistinguishable there. The
-    # auth config is what carries the real name, so join through it.
+    mine: dict[str, list[dict]] = {}
     try:
         cfgs = pod.connectors.auth_configs.list().to_dict()
         cfg_items = cfgs.get("items", cfgs) if isinstance(cfgs, dict) else cfgs
+        # An MCP install is named by its auth config, not its connector id: Granola and
+        # any other MCP server all report connector_id "mcp".
         by_cfg_id = {str(c.get("id")): str(c.get("name", "")).lower() for c in cfg_items}
+        for c in cfg_items:
+            for k in ("connector_id", "name"):
+                if c.get(k):
+                    installed.add(str(c.get(k)).lower())
 
         accts = pod.connectors.accounts.list().to_dict()
         acct_items = accts.get("items", accts) if isinstance(accts, dict) else accts
         for a in acct_items:
             if a.get("status") != "CONNECTED":
                 continue
-            name = by_cfg_id.get(str(a.get("auth_config_id")))
-            if name:
-                accounts.setdefault(name, by_account_id.get(str(a.get("id")), "") or a.get("email") or "")
+            if uid and str(a.get("user_id") or "") != uid:
+                continue
+            entry = {"id": str(a.get("id")), "email": a.get("email") or a.get("display_name") or "",
+                     "default": bool(a.get("is_default"))}
+            for key in {str(a.get("connector_id") or "").lower(), by_cfg_id.get(str(a.get("auth_config_id")), "")}:
+                if key:
+                    mine.setdefault(key, []).append(entry)
     except Exception as exc:
-        res.errors.append(f"account names unavailable: {str(exc)[:120]}")
+        res.errors.append(f"accounts unavailable: {str(exc)[:160]}")
+    accounts = {k: (v[0]["email"] if v else "") for k, v in mine.items()}
 
     for i, (app, label, why, important, onboarding) in enumerate(KNOWN):
         connected = app in accounts
@@ -120,6 +108,7 @@ async def sources_status(ctx: FunctionContext, data: SourcesInput) -> SourcesRes
             self_installable=app in SELF_INSTALLABLE,
             connected=connected,
             account_label=accounts.get(app) or None,
+            accounts=sorted(mine.get(app, []), key=lambda a: not a["default"]),
         ))
     res.connected_count = sum(1 for s in res.sources if s.connected)
     res.onboarding_connected_count = sum(

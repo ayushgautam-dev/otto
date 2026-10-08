@@ -246,9 +246,14 @@ Before you give anyone a `track_slug`:
 
 1. **Look at which trackers exist**: `select slug, name from tracks where coalesce(archived,false)=false`.
    If one fits the pipeline this person or company is in, use its slug.
-2. **If none fits, count.** Create a tracker only when **three or more** people or
-   companies are, right now, moving through the same process with the person. One
-   candidate is a conversation. Three candidates for a role is a hiring pipeline.
+2. **If none fits, count — across everyone already known, not just this batch.** A
+   pipeline builds up over many batches, so the rows in front of you will rarely show
+   three at once. Count from the record:
+   `select relationship, count(*) from people group by relationship`, adding the people
+   in your current batch. Create a tracker when **three or more** people or companies
+   are, right now, in the same process with the person. One candidate is a
+   conversation. Three candidates for a role is a hiring pipeline; three prospects
+   being sold to is a selling pipeline.
 3. **Then create it, in their words**, with `create_tracker`:
 
    ```
@@ -268,7 +273,11 @@ Before you give anyone a `track_slug`:
    organisation. It returns the `slug` to use; calling it for a tracker that already
    exists just hands that slug back.
 4. In the same batch, give the slug to **everyone** already in that pipeline, not only the
-   newest one, so the board is whole from its first day.
+   newest one, so the board is whole from its first day. Include the earlier people in
+   your `people` list with their `email` and `track_slugs`; that is enough to place them.
+5. **Before you report totals, run the count once more.** If a relationship has reached
+   three and still has no tracker, create it now and place those people. A pass that ends
+   with five prospects and no board has missed this step.
 
 Below three, assign no tracker. The commitment still shows on the desk; only the board
 waits.

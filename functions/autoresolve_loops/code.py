@@ -77,12 +77,12 @@ def _ts(value: str) -> float:
         return 0.0
 
 
-def _outlook_messages(pod, conv: str) -> list[dict]:
+def _outlook_messages(pod, conv: str, use: dict) -> list[dict]:
     """One Outlook conversation in the shape the Gmail branch reads: when, and who from."""
     resp = pod.connectors.execute("outlook", "OUTLOOK_LIST_MESSAGES", {
         "folder": "allfolders", "top": 50, "response_detail": "minimal",
         "filter": "conversationId eq '" + conv.replace("'", "''") + "'",
-    }).to_dict()
+    }, **use).to_dict()
     r = resp.get("result", resp)
     body = r.get("data", r) if isinstance(r, dict) else {}
     out = []
@@ -97,9 +97,9 @@ def _outlook_messages(pod, conv: str) -> list[dict]:
     return sorted(out, key=lambda m: m["messageTimestamp"])
 
 
-def _outlook_me(pod) -> str:
+def _outlook_me(pod, use: dict) -> str:
     try:
-        resp = pod.connectors.execute("outlook", "OUTLOOK_GET_PROFILE", {"user_id": "me"}).to_dict()
+        resp = pod.connectors.execute("outlook", "OUTLOOK_GET_PROFILE", {"user_id": "me"}, **use).to_dict()
         r = resp.get("result", resp)
         d = r.get("data", r) if isinstance(r, dict) else {}
         return (d.get("mail") or d.get("userPrincipalName") or "").strip().lower()
@@ -114,12 +114,15 @@ async def autoresolve_loops(ctx: FunctionContext, data: AutoResolveInput) -> Aut
 
     loops = pod.query(
         "select l.id, l.kind, l.side, l.obligation, l.thread_ref, l.opened_at, "
-        "coalesce(p.name,'') as person "
+        "coalesce(p.name,'') as person, "
+        # which of the person's mailboxes the conversation lives in
+        "(select i.account_id from interactions i where i.thread_ref = l.thread_ref "
+        " and i.account_id is not null limit 1) as account_id "
         "from loops l left join people p on p.id=l.person_id "
         f"where l.status='open' and coalesce(l.thread_ref,'')<>'' limit {data.max_loops}"
     ).to_dict()["items"]
 
-    outlook_me: str | None = None
+    outlook_me: dict[str, str] = {}
     for loop in loops:
         thread_ref = (loop.get("thread_ref") or "").strip()
         if not thread_ref:
@@ -139,20 +142,22 @@ async def autoresolve_loops(ctx: FunctionContext, data: AutoResolveInput) -> Aut
             continue                      # going_cold has no reply that settles it
 
         mine = my_email
+        acct = str(loop.get("account_id") or "")
+        use = {"account_id": acct} if acct else {}
         if thread_ref.startswith("outlook:"):
             # the Outlook mailbox may not be the address the person signs in to Lemma with
-            if outlook_me is None:
-                outlook_me = _outlook_me(pod)
-            mine = outlook_me or my_email
+            if acct not in outlook_me:
+                outlook_me[acct] = _outlook_me(pod, use)
+            mine = outlook_me[acct] or my_email
             try:
-                msgs = _outlook_messages(pod, thread_ref[8:])
+                msgs = _outlook_messages(pod, thread_ref[8:], use)
             except Exception:
                 continue
         else:
             try:
                 resp = pod.connectors.execute("gmail", "GMAIL_FETCH_MESSAGE_BY_THREAD_ID", {
                     "thread_id": thread_ref,
-                }).to_dict()
+                }, **use).to_dict()
             except Exception:
                 continue
             r = resp.get("result", resp)

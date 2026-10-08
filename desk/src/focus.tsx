@@ -14,6 +14,7 @@ import { Prepared, Paper, LemNote, draftForLoop, useDocsForLoop, type DraftRow }
 import { useLem } from './lem'
 import { tm } from './teammate'
 
+import { useAccounts, useThreadAccount, accountLabel } from './accounts'
 /* Focus: the panel beside the page — a strip of tabs, one per thing you have open. */
 
 interface TabInfo { label: string; side?: string; avatar_url?: string | null; domain?: string | null; [k: string]: unknown }
@@ -50,7 +51,10 @@ function TabHandle({ f, on, onPick, onClose }: { f: Focus; on: boolean; onPick: 
 interface LoopFull extends LoopRow { company_id?: string | null; status: string }
 
 function SourceIcon({ l }: { l: LoopRow }) {
-  if (isGmailThread(l.thread_ref)) return <span className="src" title="From email"><Mail size={12} /> Email</span>
+  const { multi } = useAccounts()
+  const account = useThreadAccount(isGmailThread(l.thread_ref) ? l.thread_ref : null)
+  // with more than one mailbox, say which one it came in on
+  if (isGmailThread(l.thread_ref)) return <span className="src" title={multi && account ? `Arrived on ${accountLabel(account)}` : 'From email'}><Mail size={12} /> {multi && account ? accountLabel(account) : 'Email'}</span>
   if (l.thread_ref?.startsWith('granola:')) return <span className="src" title="From meeting notes"><NotebookPen size={12} /> Meeting notes</span>
   if (l.source === 'calendar') return <span className="src"><CalendarDays size={12} /> Calendar</span>
   return null

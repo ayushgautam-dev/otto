@@ -27,6 +27,7 @@ interface Source {
   onboarding?: boolean
   connected?: boolean
   status?: string
+  accounts?: { id: string; email: string }[]
 }
 
 interface Counts { emails: number; meetings: number; people: number; open_loops: number }
@@ -107,11 +108,12 @@ export function FirstRun({ name, onDone }: { name: string; onDone: () => void })
 
   /** Watch for the account to appear. The sign-in tab is on the provider's origin and
    *  cannot tell us anything, so we ask until it shows up (three minutes at most). */
-  async function waitFor(app: string) {
+  async function waitFor(app: string, want = 1) {
     for (let i = 0; i < 90; i++) {
       await sleep(2000)
       const all = await load()
-      if (all.some((s) => s.app === app && isOn(s))) { setBlocked(null); return true }
+      const s = all.find((x) => x.app === app)
+      if (s && isOn(s) && (s.accounts?.length ?? 1) >= want) { setBlocked(null); return true }
     }
     return false
   }
@@ -120,9 +122,10 @@ export function FirstRun({ name, onDone }: { name: string; onDone: () => void })
      click, and the link is not known until the pod has answered, so the tab is opened
      first, empty, and pointed at the provider when the link arrives. If the browser
      refuses even that, the link is put on the card as an ordinary link to press. */
-  async function connect(app: string) {
+  async function connect(app: string, another = false) {
     if (busy) return
     setBusy(app); setNote(''); setBlocked(null)
+    const had = (sources ?? []).find((x) => x.app === app)?.accounts?.length ?? 0
     const tab = window.open('', '_blank')
     try { tab?.document.write('<p style="font:15px system-ui;padding:32px;color:#555">Opening sign-in…</p>') } catch { /* cosmetic */ }
     try {
@@ -131,7 +134,7 @@ export function FirstRun({ name, onDone }: { name: string; onDone: () => void })
          none of it should mean a trip to an admin console. */
       const out = await runFn<{
         auth_url?: string; authorization_url?: string; already_connected?: boolean; explanation?: string
-      }>('connect_source', { app })
+      }>('connect_source', another ? { app, add_another: true } : { app })
       const url = out.auth_url || out.authorization_url
       if (out.already_connected || !url) {
         tab?.close()
@@ -141,7 +144,7 @@ export function FirstRun({ name, onDone }: { name: string; onDone: () => void })
       }
       if (tab && !tab.closed) { tab.opener = null; tab.location.href = url }
       else setBlocked({ app, url })
-      if (!(await waitFor(app))) setNote('Still waiting. Finish signing in, then press it again.')
+      if (!(await waitFor(app, another ? had + 1 : 1))) setNote('Still waiting. Finish signing in, then press it again.')
     } catch {
       tab?.close()
       setNote('That did not start. Try again.')
@@ -236,19 +239,23 @@ export function FirstRun({ name, onDone }: { name: string; onDone: () => void })
               {(sources ?? []).map((s) => {
                 const on = isOn(s)
                 const link = blocked?.app === s.app ? blocked.url : null
+                // a mailbox can be connected more than once: a second Gmail, a second Outlook
+                const more = on && (s.app === 'gmail' || s.app === 'outlook')
+                const emails = (s.accounts ?? []).map((x) => x.email).filter(Boolean)
                 const inner = (
                   <>
                     <SourceMark app={s.app} label={s.label} />
                     <span className="fr-tile-n">{s.label}</span>
+                    {emails.length > 0 && <span className="fr-tile-e" title={emails.join(', ')}>{emails.length > 1 ? `${emails.length} accounts` : emails[0]}</span>}
                     <span className="fr-tile-s">
-                      {on ? <Check size={14} strokeWidth={2.8} /> : busy === s.app ? <span className="spinner sm" /> : link ? 'Open' : 'Connect'}
+                      {busy === s.app ? <span className="spinner sm" /> : link ? 'Open' : more ? 'Add another' : on ? <Check size={14} strokeWidth={2.8} /> : 'Connect'}
                     </span>
                   </>
                 )
                 const cls = `fr-tile${on ? ' is-on' : ''}${s.important ? ' is-key' : ''}`
                 return link
                   ? <a key={s.app} className={cls} href={link} target="_blank" rel="noreferrer">{inner}</a>
-                  : <button key={s.app} className={cls} disabled={on || !!busy} onClick={() => void connect(s.app)}>{inner}</button>
+                  : <button key={s.app} className={cls} disabled={(on && !more) || !!busy} onClick={() => void connect(s.app, more)}>{inner}</button>
               })}
             </div>
             {note && <p className="fr-note">{note}</p>}

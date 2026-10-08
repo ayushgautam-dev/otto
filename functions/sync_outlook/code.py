@@ -35,6 +35,7 @@ class SyncOutlookInput(BaseModel):
     max_events: int = 150
     body_chars: int = 20000
     batch_size: int = 10
+    account_id: str | None = None      # one account only; omit to read every Outlook of mine
 
 
 class SyncOutlookResult(BaseModel):
@@ -44,6 +45,7 @@ class SyncOutlookResult(BaseModel):
     skipped_duplicate: int = 0
     files_written: int = 0
     errors: list[str] = []
+    accounts: int = 0
 
 
 _TAG = re.compile(r"<[^>]+>")
@@ -73,9 +75,9 @@ def _unwrap(resp) -> dict:
     return d if isinstance(d, dict) else {}
 
 
-def _my_address(pod: Pod, fallback: str) -> str:
+def _my_address(pod: Pod, fallback: str, use: dict) -> str:
     try:
-        p = _unwrap(pod.connectors.execute("outlook", "OUTLOOK_GET_PROFILE", {"user_id": "me"}))
+        p = _unwrap(pod.connectors.execute("outlook", "OUTLOOK_GET_PROFILE", {"user_id": "me"}, **use))
         return (p.get("mail") or p.get("userPrincipalName") or fallback or "").strip().lower()
     except Exception:
         return (fallback or "").lower()
@@ -96,7 +98,8 @@ def _record(pod: Pod, interactions: list[dict], res: SyncOutlookResult, batch: i
         res.errors += (d.get("errors") or [])[:3]
 
 
-def _mail(pod: Pod, data: SyncOutlookInput, me: str, res: SyncOutlookResult) -> list[dict]:
+def _mail(pod: Pod, data: SyncOutlookInput, me: str, mine: set, acct: dict, res: SyncOutlookResult) -> list[dict]:
+    use = {"account_id": acct["id"]} if acct.get("id") else {}
     now = datetime.now(timezone.utc)
     since = data.since or (now - timedelta(days=data.days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     raw: list[tuple[dict, bool]] = []
@@ -116,7 +119,7 @@ def _mail(pod: Pod, data: SyncOutlookInput, me: str, res: SyncOutlookResult) -> 
             if token:
                 payload["page_token"] = token
             try:
-                body = _unwrap(pod.connectors.execute("outlook", "OUTLOOK_LIST_MESSAGES", payload))
+                body = _unwrap(pod.connectors.execute("outlook", "OUTLOOK_LIST_MESSAGES", payload, **use))
             except Exception as exc:
                 res.errors.append(f"{folder}: {str(exc)[:160]}")
                 break
@@ -141,11 +144,15 @@ def _mail(pod: Pod, data: SyncOutlookInput, me: str, res: SyncOutlookResult) -> 
         from_name, from_email = _who(m.get("from") or m.get("sender"))
         to_addrs = [a for a in (_who(x)[1] for x in (m.get("toRecipients") or [])) if a]
         cc_addrs = [a for a in (_who(x)[1] for x in (m.get("ccRecipients") or [])) if a]
-        outbound = in_sent or (me and from_email == me)
+        outbound = in_sent or from_email in mine or (me and from_email == me)
         if outbound:
             counterpart = next((a for a in to_addrs if a != me), "")
         else:
             counterpart = from_email if from_email != me else ""
+
+        # a note between my own mailboxes is not a conversation with anybody
+        if counterpart in mine:
+            continue
 
         participants = [{"name": from_name, "email": from_email, "role": "from"}]
         participants += [{"email": a, "role": "to"} for a in to_addrs[:12]]
@@ -157,11 +164,12 @@ def _mail(pod: Pod, data: SyncOutlookInput, me: str, res: SyncOutlookResult) -> 
             "source": "gmail",          # the ledger's word for "email", whichever mailbox
             "external_id": ext,
             "thread_ref": f"outlook:{conv}" if conv else ext,
+            "account_id": acct.get("id") or None,
             "occurred_at": m.get("receivedDateTime") or m.get("sentDateTime") or now.isoformat(),
             "subject": (m.get("subject") or "(no subject)").strip(),
             "body": _text(m.get("body"), m.get("bodyPreview") or "")[: data.body_chars],
             "direction": "outbound" if outbound else "inbound",
-            "addressed_to_me": bool(outbound or (me and me in to_addrs) or not me),
+            "addressed_to_me": bool(outbound or any(a in mine for a in to_addrs) or not me),
             "person_email": counterpart,
             "company_domain": counterpart.split("@")[-1] if "@" in counterpart else None,
             "participants": participants,
@@ -169,14 +177,15 @@ def _mail(pod: Pod, data: SyncOutlookInput, me: str, res: SyncOutlookResult) -> 
     return out
 
 
-def _calendar(pod: Pod, data: SyncOutlookInput, me: str, res: SyncOutlookResult) -> list[dict]:
+def _calendar(pod: Pod, data: SyncOutlookInput, me: str, mine: set, acct: dict, res: SyncOutlookResult) -> list[dict]:
+    use = {"account_id": acct["id"]} if acct.get("id") else {}
     now = datetime.now(timezone.utc)
     try:
         body = _unwrap(pod.connectors.execute("outlook", "OUTLOOK_GET_CALENDAR_VIEW", {
             "start_datetime": (now - timedelta(days=data.past_days)).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "end_datetime": (now + timedelta(days=data.future_days)).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "top": data.max_events, "timezone": "UTC", "orderby": "start/dateTime asc",
-        }))
+        }, **use))
     except Exception as exc:
         res.errors.append(f"calendar: {str(exc)[:160]}")
         return []
@@ -194,7 +203,7 @@ def _calendar(pod: Pod, data: SyncOutlookInput, me: str, res: SyncOutlookResult)
         attendees = []
         for a in (ev.get("attendees") or []):
             name, em = _who(a)
-            if not em or em == me or (a.get("type") or "").lower() == "resource":
+            if not em or em == me or em in mine or (a.get("type") or "").lower() == "resource":
                 continue
             attendees.append({"email": em, "name": name, "role": "attendee"})
         title = (ev.get("subject") or "(untitled)").strip()
@@ -221,6 +230,7 @@ def _calendar(pod: Pod, data: SyncOutlookInput, me: str, res: SyncOutlookResult)
             "source": "calendar",
             "external_id": f"ocal:{ev['id']}",
             "thread_ref": f"ocal:{ev.get('seriesMasterId') or ev['id']}",
+            "account_id": acct.get("id") or None,
             "occurred_at": start,
             "subject": title,
             "body": "\n".join(lines),
@@ -233,17 +243,69 @@ def _calendar(pod: Pod, data: SyncOutlookInput, me: str, res: SyncOutlookResult)
     return out
 
 
+
+# ---- Which accounts are mine. ----
+# A person may connect several mailboxes (two Gmails, a Gmail and an Outlook). Connected
+# accounts belong to the organisation, so everything here is narrowed to the accounts
+# of the person this run is for: nobody's run may ever touch somebody else's mailbox.
+
+def _items(x) -> list:
+    x = x.to_dict() if hasattr(x, "to_dict") else x
+    return x.get("items", []) if isinstance(x, dict) else (x or [])
+
+
+def _my_accounts(pod, ctx, connector: str) -> list[dict]:
+    """My connected accounts for one connector: [{id, email}], the default one first."""
+    uid = str(getattr(ctx, "user_id", "") or "")
+    out = []
+    if not uid:
+        # without knowing who this run is for, nothing can be called "mine": the caller
+        # falls back to the workspace default rather than reading every mailbox in it
+        return out
+    try:
+        for a in _items(pod.connectors.accounts.list()):
+            if a.get("status") != "CONNECTED" or str(a.get("connector_id") or "").lower() != connector:
+                continue
+            if str(a.get("user_id") or "") != uid:
+                continue
+            out.append({"id": str(a.get("id")), "email": (a.get("email") or "").strip().lower(),
+                        "default": bool(a.get("is_default"))})
+    except Exception:
+        return []
+    return sorted(out, key=lambda a: not a["default"])
+
+
+def _my_addresses(pod, ctx) -> set[str]:
+    """Every address that is me, across all my mailboxes."""
+    mine = {(getattr(ctx, "user_email", "") or "").strip().lower()}
+    for c in ("gmail", "outlook"):
+        mine |= {a["email"] for a in _my_accounts(pod, ctx, c)}
+    return {m for m in mine if m}
+
+
 async def sync_outlook(ctx: FunctionContext, data: SyncOutlookInput) -> SyncOutlookResult:
     pod = Pod.from_env()
     res = SyncOutlookResult()
-    me = _my_address(pod, ctx.user_email or "")
     what = (data.what or "mail").lower()
 
+    mine = _my_addresses(pod, ctx)
+    accounts = _my_accounts(pod, ctx, "outlook")
+    if data.account_id:
+        accounts = [a for a in accounts if a["id"] == data.account_id] or [{"id": data.account_id, "email": ""}]
+    if not accounts:
+        accounts = [{"id": "", "email": ""}]      # the workspace default, as before
+    res.accounts = len([a for a in accounts if a["id"]])
+
     interactions: list[dict] = []
-    if what in ("mail", "both"):
-        interactions += _mail(pod, data, me, res)
-    if what in ("calendar", "both"):
-        interactions += _calendar(pod, data, me, res)
+    for acct in accounts:
+        use = {"account_id": acct["id"]} if acct["id"] else {}
+        me = acct["email"] or _my_address(pod, ctx.user_email or "", use)
+        if me:
+            mine.add(me)
+        if what in ("mail", "both"):
+            interactions += _mail(pod, data, me, mine, acct, res)
+        if what in ("calendar", "both"):
+            interactions += _calendar(pod, data, me, mine, acct, res)
     res.shaped = len(interactions)
     _record(pod, interactions, res, data.batch_size)
     return res

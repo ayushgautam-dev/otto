@@ -18,6 +18,7 @@ class GetAttachmentInput(BaseModel):
     message_id: str
     attachment_id: str
     file_name: str = "attachment"
+    account_id: str | None = None      # which mailbox, when the person has more than one
 
 
 class GetAttachmentResult(BaseModel):
@@ -44,15 +45,16 @@ async def get_email_attachment(ctx: FunctionContext, data: GetAttachmentInput) -
     # Gmail message ids are short hex; anything else here is an Outlook message id
     outlook = not re.fullmatch(r"[0-9a-f]{10,24}", (data.message_id or "").strip())
     where = "Outlook" if outlook else "Gmail"
+    use = {"account_id": data.account_id} if (data.account_id or "").strip() else {}
     try:
         if outlook:
             out = pod.connectors.execute("outlook", "OUTLOOK_GET_USER_MESSAGES_ATTACHMENTS", {
                 "message_id": data.message_id, "attachment_id": data.attachment_id, "user_id": "me",
-            })
+            }, **use)
         else:
             out = pod.connectors.execute("gmail", "GMAIL_GET_ATTACHMENT", {
                 "message_id": data.message_id, "attachment_id": data.attachment_id, "file_name": data.file_name,
-            })
+            }, **use)
         out = out.to_dict() if hasattr(out, "to_dict") else out
     except Exception as exc:
         res.error = f"{where} would not open it: {str(exc)[:160]}"

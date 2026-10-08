@@ -22,6 +22,7 @@ import { Profile } from './profile'
 import { ensureMyAutopilots, ensureSkills } from './autopilot-sync'
 import { useCatchUp, CatchUpCtx, type CatchUp } from './backfill'
 import { useTeammate, useTeammateFace, tm, DEFAULT_TEAMMATE } from './teammate'
+import { useNewAccountCatchUp } from './accounts'
 import './styles.css'
 
 const queryClient = new QueryClient()
@@ -96,6 +97,8 @@ function Shell({ name, email }: { name: string; email: string }) {
   const { route, bump } = useNav()
   // the older history keeps loading behind whatever page is open
   const catching = useCatchUp(bump)
+  // a mailbox connected after first run loads its own three weeks
+  useNewAccountCatchUp()
   const lem = useLem()
   useRowKeys()
   let screen: React.ReactNode

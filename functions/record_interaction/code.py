@@ -31,6 +31,7 @@ class InteractionIn(BaseModel):
     external_id: str                           # RFC Message-ID, event id, meeting id — the idempotency key
     occurred_at: str
     thread_ref: str | None = None
+    account_id: str | None = None              # which connected account it arrived on
     subject: str | None = None
     body: str | None = None                    # raw text; goes to a file, never to a column
     direction: str | None = None               # inbound | outbound | internal
@@ -176,6 +177,8 @@ async def record_interaction(ctx: FunctionContext, data: RecordInput) -> RecordR
         }
         if item.thread_ref:
             row["thread_ref"] = item.thread_ref[:300]
+        if item.account_id:
+            row["account_id"] = item.account_id[:80]
         if item.subject:
             row["subject"] = item.subject
         direction = _norm_direction(item.direction)

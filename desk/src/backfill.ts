@@ -212,6 +212,18 @@ export async function quickStart(sources: string[], say: (phase: string) => void
   return { trouble }
 }
 
+/** Load history again from today backwards, for a mailbox connected after first run.
+ *  Everything already in the ledger is skipped, so only the new mailbox is read. */
+export async function restartCatchUp(sources: string[]): Promise<void> {
+  const state: CatchUp = { covered: 0, target: WINDOW_DAYS, sources, extras: false, done: false, unread: 0 }
+  await putSetting('catchup', JSON.stringify(state))
+  await putSetting('catchup_wrapped', '')
+  try {
+    await setCatchUpSchedule(true)
+    await startWorkflow('catch_up')
+  } catch { /* the nightly pass picks the new mailbox up instead */ }
+}
+
 export async function readCatchUp(): Promise<CatchUp | null> {
   const row = await getSetting('catchup')
   if (!row) return null

@@ -35,6 +35,12 @@ class SendDraftInput(BaseModel):
     cc: list[str] | None = None
     extra_to: list[str] | None = None
     thread_ref: str | None = None
+    # Which of the person's mailboxes this goes out from, when they have more than one:
+    # the connected account's id, and whether it is a "gmail" or an "outlook" account.
+    # A reply goes from the account its conversation lives in; the app reads both off
+    # the row. Empty means the workspace default, as before.
+    account_id: str | None = None
+    provider: str | None = None
     # A document Lem prepared for this commitment, already rendered to HTML by the app.
     # Gmail attachments need a file in Composio's own storage, which we cannot produce, so
     # the document travels inside the email, below the note, under an "Attached" heading.
@@ -74,19 +80,19 @@ def _o_unwrap(resp) -> dict:
     return d if isinstance(d, dict) else {}
 
 
-def _o_conversation(pod, conv: str, detail: str = "minimal") -> list[dict]:
+def _o_conversation(pod, conv: str, detail: str = "minimal", use: dict | None = None) -> list[dict]:
     """Every message in one Outlook conversation, across folders, oldest first."""
     body = _o_unwrap(pod.connectors.execute("outlook", "OUTLOOK_LIST_MESSAGES", {
         "folder": "allfolders", "top": 50, "response_detail": detail,
         "filter": "conversationId eq '" + conv.replace("'", "''") + "'",
-    }))
+    }, **(use or {})))
     msgs = [m for m in (body.get("value") or []) if not m.get("isDraft")]
     return sorted(msgs, key=lambda m: m.get("receivedDateTime") or m.get("sentDateTime") or "")
 
 
-def _o_me(pod) -> str:
+def _o_me(pod, use: dict | None = None) -> str:
     try:
-        p = _o_unwrap(pod.connectors.execute("outlook", "OUTLOOK_GET_PROFILE", {"user_id": "me"}))
+        p = _o_unwrap(pod.connectors.execute("outlook", "OUTLOOK_GET_PROFILE", {"user_id": "me"}, **(use or {})))
         return (p.get("mail") or p.get("userPrincipalName") or "").strip().lower()
     except Exception:
         return ""
@@ -158,12 +164,15 @@ async def send_draft(ctx: FunctionContext, data: SendDraftInput) -> SendDraftRes
         )
 
     # --- the send itself. Everything after this only runs if the mailbox accepted. ---
-    if outlook_conv or (not thread_ref and _mail_is_outlook(pod)):
+    use = {"account_id": data.account_id} if (data.account_id or "").strip() else {}
+    provider = (data.provider or "").strip().lower()
+    via_outlook = bool(outlook_conv) or (not thread_ref and (provider == "outlook" or (not provider and _mail_is_outlook(pod))))
+    if via_outlook:
         try:
             last = None
             if outlook_conv:
-                me = _o_me(pod)
-                msgs = _o_conversation(pod, outlook_conv)
+                me = _o_me(pod, use)
+                msgs = _o_conversation(pod, outlook_conv, "minimal", use)
                 # reply to the latest message that is not the person's own, else the latest
                 theirs = [m for m in msgs if ((m.get("from") or {}).get("emailAddress") or {}).get("address", "").lower() != me]
                 last = (theirs or msgs or [None])[-1]
@@ -172,14 +181,14 @@ async def send_draft(ctx: FunctionContext, data: SendDraftInput) -> SendDraftRes
                 args = {"message_id": last["id"], "comment": html_body, "is_html": True, "user_id": "me"}
                 if cc or extra:
                     args["cc_emails"] = cc + extra
-                pod.connectors.execute("outlook", "OUTLOOK_REPLY_EMAIL", args)
+                pod.connectors.execute("outlook", "OUTLOOK_REPLY_EMAIL", args, **use)
             else:
                 res.mode = "new"
                 args = {"to": ", ".join([to_email] + extra), "subject": subject or "(no subject)",
                         "body": html_body, "is_html": True, "user_id": "me", "save_to_sent_items": True}
                 if cc:
                     args["cc_emails"] = cc
-                pod.connectors.execute("outlook", "OUTLOOK_SEND_EMAIL", args)
+                pod.connectors.execute("outlook", "OUTLOOK_SEND_EMAIL", args, **use)
         except Exception as exc:
             res.error = f"Outlook refused the message: {str(exc)[:200]}"
             return res
@@ -205,7 +214,7 @@ async def send_draft(ctx: FunctionContext, data: SendDraftInput) -> SendDraftRes
                 args["cc"] = cc
             if extra:
                 args["extra_recipients"] = extra
-            pod.connectors.execute("gmail", "GMAIL_REPLY_TO_THREAD" if thread_ref else "GMAIL_SEND_EMAIL", args)
+            pod.connectors.execute("gmail", "GMAIL_REPLY_TO_THREAD" if thread_ref else "GMAIL_SEND_EMAIL", args, **use)
         except Exception as exc:
             res.error = f"Gmail refused the message: {str(exc)[:200]}"
             return res          # nothing marked, nothing closed — the draft stays pending

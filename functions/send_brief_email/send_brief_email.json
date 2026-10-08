@@ -36,6 +36,14 @@
           "datastore.record.read",
           "datastore.table.read"
         ],
+        "resource_name": "settings",
+        "resource_type": "datastore_table"
+      },
+      {
+        "permission_ids": [
+          "datastore.record.read",
+          "datastore.table.read"
+        ],
         "resource_name": "briefs",
         "resource_type": "datastore_table"
       }

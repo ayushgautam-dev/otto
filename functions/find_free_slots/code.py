@@ -62,6 +62,46 @@ def _calendar_is_outlook(pod) -> bool:
         return False
 
 
+
+# ---- Which accounts are mine. ----
+# A person may connect several mailboxes (two Gmails, a Gmail and an Outlook). Connected
+# accounts belong to the organisation, so everything here is narrowed to the accounts
+# of the person this run is for: nobody's run may ever touch somebody else's mailbox.
+
+def _items(x) -> list:
+    x = x.to_dict() if hasattr(x, "to_dict") else x
+    return x.get("items", []) if isinstance(x, dict) else (x or [])
+
+
+def _my_accounts(pod, ctx, connector: str) -> list[dict]:
+    """My connected accounts for one connector: [{id, email}], the default one first."""
+    uid = str(getattr(ctx, "user_id", "") or "")
+    out = []
+    if not uid:
+        # without knowing who this run is for, nothing can be called "mine": the caller
+        # falls back to the workspace default rather than reading every mailbox in it
+        return out
+    try:
+        for a in _items(pod.connectors.accounts.list()):
+            if a.get("status") != "CONNECTED" or str(a.get("connector_id") or "").lower() != connector:
+                continue
+            if str(a.get("user_id") or "") != uid:
+                continue
+            out.append({"id": str(a.get("id")), "email": (a.get("email") or "").strip().lower(),
+                        "default": bool(a.get("is_default"))})
+    except Exception:
+        return []
+    return sorted(out, key=lambda a: not a["default"])
+
+
+def _my_addresses(pod, ctx) -> set[str]:
+    """Every address that is me, across all my mailboxes."""
+    mine = {(getattr(ctx, "user_email", "") or "").strip().lower()}
+    for c in ("gmail", "outlook"):
+        mine |= {a["email"] for a in _my_accounts(pod, ctx, c)}
+    return {m for m in mine if m}
+
+
 async def find_free_slots(ctx: FunctionContext, data: FindFreeSlotsInput) -> FindFreeSlotsResult:
     pod = Pod.from_env()
     res = FindFreeSlotsResult()
@@ -72,66 +112,63 @@ async def find_free_slots(ctx: FunctionContext, data: FindFreeSlotsInput) -> Fin
     search_from = (now + timedelta(hours=2)).replace(minute=0, second=0, microsecond=0)
     search_to = search_from + timedelta(days=max(1, data.days_ahead))
 
+    # Busy time is counted across EVERY calendar the person connected, Google and
+    # Outlook alike: a slot that is free on one and taken on the other is not free.
     busy: list[tuple[datetime, datetime]] = []
-    outlook = _calendar_is_outlook(pod)
-    if outlook:
+    t_from = search_from.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    t_to = search_to.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    targets = [("google", {"account_id": a["id"]}) for a in _my_accounts(pod, ctx, "google_calendar")]
+    targets += [("outlook", {"account_id": a["id"]}) for a in _my_accounts(pod, ctx, "outlook")]
+    if not targets:      # accounts could not be listed: the workspace default, as before
+        targets = [("outlook" if _calendar_is_outlook(pod) else "google", {})]
+
+    for kind, use in targets:
         try:
-            resp = pod.connectors.execute("outlook", "OUTLOOK_GET_CALENDAR_VIEW", {
-                "start_datetime": search_from.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "end_datetime": search_to.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "top": 250, "timezone": "UTC",
-            }).to_dict()
-            r = resp.get("result", resp)
-            body = r.get("data", r) if isinstance(r, dict) else {}
-            items = body.get("value", []) if isinstance(body, dict) else []
-            res.considered_events = len(items)
-            for ev in items:
-                # cancelled, declined, or marked free: none of those is busy time
-                if ev.get("isCancelled") or (ev.get("showAs") or "") == "free":
-                    continue
-                if ((ev.get("responseStatus") or {}).get("response") or "") == "declined":
-                    continue
-                try:
-                    s0 = datetime.fromisoformat(((ev.get("start") or {}).get("dateTime") or "")[:19]).replace(tzinfo=timezone.utc)
-                    e0 = datetime.fromisoformat(((ev.get("end") or {}).get("dateTime") or "")[:19]).replace(tzinfo=timezone.utc)
-                except Exception:
-                    continue
-                busy.append((s0.astimezone(tz), e0.astimezone(tz)))
+            if kind == "outlook":
+                resp = pod.connectors.execute("outlook", "OUTLOOK_GET_CALENDAR_VIEW", {
+                    "start_datetime": t_from, "end_datetime": t_to, "top": 250, "timezone": "UTC",
+                }, **use).to_dict()
+                r = resp.get("result", resp)
+                body = r.get("data", r) if isinstance(r, dict) else {}
+                items = body.get("value", []) if isinstance(body, dict) else []
+                res.considered_events += len(items)
+                for ev in items:
+                    # cancelled, declined, or marked free: none of those is busy time
+                    if ev.get("isCancelled") or (ev.get("showAs") or "") == "free":
+                        continue
+                    if ((ev.get("responseStatus") or {}).get("response") or "") == "declined":
+                        continue
+                    try:
+                        s0 = datetime.fromisoformat(((ev.get("start") or {}).get("dateTime") or "")[:19]).replace(tzinfo=timezone.utc)
+                        e0 = datetime.fromisoformat(((ev.get("end") or {}).get("dateTime") or "")[:19]).replace(tzinfo=timezone.utc)
+                    except Exception:
+                        continue
+                    busy.append((s0.astimezone(tz), e0.astimezone(tz)))
+            else:
+                resp = pod.connectors.execute("google_calendar", "GOOGLECALENDAR_EVENTS_LIST", {
+                    "calendarId": "primary", "timeMin": t_from, "timeMax": t_to,
+                    "maxResults": 250, "singleEvents": True, "orderBy": "startTime",
+                }, **use).to_dict()
+                r = resp.get("result", resp)
+                body = r.get("data", r) if isinstance(r, dict) else {}
+                items = body.get("items", []) if isinstance(body, dict) else []
+                res.considered_events += len(items)
+                for ev in items:
+                    if (ev.get("status") or "") == "cancelled":
+                        continue
+                    # Something you declined is not busy time.
+                    if any(a.get("self") and a.get("responseStatus") == "declined"
+                           for a in (ev.get("attendees") or [])):
+                        continue
+                    s, e = _parse(ev.get("start")), _parse(ev.get("end"))
+                    if s and e:
+                        busy.append((s.astimezone(tz), e.astimezone(tz)))
+                    if not res.timezone:
+                        res.timezone = (ev.get("start") or {}).get("timeZone") or ""
         except Exception as exc:
+            # No calendar is a soft failure — the composer just offers nothing specific.
             res.errors.append(str(exc)[:200])
-    try:
-        if outlook:
-            raise StopIteration
-        resp = pod.connectors.execute("google_calendar", "GOOGLECALENDAR_EVENTS_LIST", {
-            "calendarId": "primary",
-            "timeMin": search_from.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "timeMax": search_to.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "maxResults": 250, "singleEvents": True, "orderBy": "startTime",
-        }).to_dict()
-        r = resp.get("result", resp)
-        body = r.get("data", r) if isinstance(r, dict) else {}
-        items = body.get("items", []) if isinstance(body, dict) else []
-        res.considered_events = len(items)
-        for ev in items:
-            if (ev.get("status") or "") == "cancelled":
-                continue
-            # Something you declined is not busy time.
-            declined = any(
-                a.get("self") and a.get("responseStatus") == "declined"
-                for a in (ev.get("attendees") or [])
-            )
-            if declined:
-                continue
-            s, e = _parse(ev.get("start")), _parse(ev.get("end"))
-            if s and e:
-                busy.append((s.astimezone(tz), e.astimezone(tz)))
-            if not res.timezone:
-                res.timezone = (ev.get("start") or {}).get("timeZone") or ""
-    except StopIteration:
-        pass
-    except Exception as exc:
-        # No calendar is a soft failure — the composer just offers nothing specific.
-        res.errors.append(str(exc)[:200])
 
     step = timedelta(minutes=30)
     dur = timedelta(minutes=max(15, data.duration_min))
