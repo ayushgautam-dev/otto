@@ -45,6 +45,13 @@
         ],
         "resource_name": "sync_granola",
         "resource_type": "function"
+      },
+      {
+        "permission_ids": [
+          "function.execute"
+        ],
+        "resource_name": "sync_outlook",
+        "resource_type": "function"
       }
     ]
   },

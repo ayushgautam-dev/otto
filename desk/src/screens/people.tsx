@@ -48,7 +48,7 @@ export function People() {
   const companies = useSql<C>(rev(
     `select c.id, c.name, c.domain,
        (select count(*) from loops l join people p on p.id=l.person_id where p.company_id=c.id and l.status='open') as open_count,
-       (select s.name from board_cards b join tracks t on t.id=b.track_id and lower(t.name)='sales'
+       (select s.name from board_cards b join tracks t on t.id=b.track_id
           left join stages s on s.id=b.stage_id where b.company_id=c.id limit 1) as stage
      from companies c
      order by c.name`, version))

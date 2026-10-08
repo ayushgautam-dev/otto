@@ -7,7 +7,7 @@ For anyone — person or agent — changing this pod. How it behaves is in
 ## Setting a fresh pod up
 
 ```bash
-git clone --depth 1 https://github.com/ayushgautam-dev/open-loops && cd open-loops
+git clone --depth 1 https://github.com/ayushgautam-dev/otto && cd otto
 export LEMMA_POD_ID=<pod>     # already set inside a pod's own workspace
 ./setup.sh                    # ~3 min, then a note telling you what to say
 ```
@@ -61,8 +61,8 @@ Lemma sign-in, and an agent has no session to get past it.
 
 ## The apps
 
-`apps/open-loops-desk/source/` and `apps/open-loops/source/` are **built output** —
-uploaded as-is on import, no npm, no variables. Change the project in `desk/` or `app/`,
+`apps/otto/source/` is **built output** —
+uploaded as-is on import, no npm, no variables. Change the project in `desk/`,
 then run its `build.sh`. Shipping an edit without the rebuild changes nothing anybody
 can see.
 

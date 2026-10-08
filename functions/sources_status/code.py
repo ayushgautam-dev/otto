@@ -20,6 +20,8 @@ from lemma_sdk import FunctionContext, Pod
 KNOWN = [
     ("gmail", "Gmail", "Threads, who spoke last, and what was asked of you.", True, True),
     ("google_calendar", "Google Calendar", "Who you are meeting, and what was agreed but never booked.", True, True),
+    # Microsoft 365: mail and calendar in one sign-in. Either this or Gmail is enough.
+    ("outlook", "Outlook", "Mail and calendar, for work that lives in Microsoft 365.", True, True),
     ("granola", "Granola", "Meeting notes and action items — where a promise made out loud gets written down. Sign in with your own Granola account; the free plan is enough.", False, True),
     ("googlemeet", "Google Meet", "Call transcripts, where Meet recorded one.", False, False),
     ("slack", "Slack", "The channels you invited the app to, where the day's asks land.", False, False),
@@ -54,7 +56,7 @@ class SourcesResult(BaseModel):
 
 # Sources `connect_source` can install by itself, so a freshly cloned pod never
 # sends anybody to an admin console. Kept in step with INSTALL over there.
-SELF_INSTALLABLE = {"gmail", "google_calendar", "googlemeet", "granola"}
+SELF_INSTALLABLE = {"gmail", "google_calendar", "outlook", "googlemeet", "granola"}
 
 
 async def sources_status(ctx: FunctionContext, data: SourcesInput) -> SourcesResult:

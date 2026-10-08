@@ -49,6 +49,19 @@ def _parse(dt: dict) -> datetime | None:
         return None
 
 
+def _calendar_is_outlook(pod) -> bool:
+    """The Outlook calendar is the person's calendar when Outlook is connected and Google
+    Calendar is not."""
+    try:
+        st = pod.connectors.status()
+        on = {str(a.get("connector_id") or "").lower()
+              for a in (st.get("connected_accounts") or st.get("accounts") or [])
+              if isinstance(a, dict) and a.get("status") == "CONNECTED"}
+        return "outlook" in on and "google_calendar" not in on
+    except Exception:
+        return False
+
+
 async def find_free_slots(ctx: FunctionContext, data: FindFreeSlotsInput) -> FindFreeSlotsResult:
     pod = Pod.from_env()
     res = FindFreeSlotsResult()
@@ -60,7 +73,35 @@ async def find_free_slots(ctx: FunctionContext, data: FindFreeSlotsInput) -> Fin
     search_to = search_from + timedelta(days=max(1, data.days_ahead))
 
     busy: list[tuple[datetime, datetime]] = []
+    outlook = _calendar_is_outlook(pod)
+    if outlook:
+        try:
+            resp = pod.connectors.execute("outlook", "OUTLOOK_GET_CALENDAR_VIEW", {
+                "start_datetime": search_from.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "end_datetime": search_to.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "top": 250, "timezone": "UTC",
+            }).to_dict()
+            r = resp.get("result", resp)
+            body = r.get("data", r) if isinstance(r, dict) else {}
+            items = body.get("value", []) if isinstance(body, dict) else []
+            res.considered_events = len(items)
+            for ev in items:
+                # cancelled, declined, or marked free: none of those is busy time
+                if ev.get("isCancelled") or (ev.get("showAs") or "") == "free":
+                    continue
+                if ((ev.get("responseStatus") or {}).get("response") or "") == "declined":
+                    continue
+                try:
+                    s0 = datetime.fromisoformat(((ev.get("start") or {}).get("dateTime") or "")[:19]).replace(tzinfo=timezone.utc)
+                    e0 = datetime.fromisoformat(((ev.get("end") or {}).get("dateTime") or "")[:19]).replace(tzinfo=timezone.utc)
+                except Exception:
+                    continue
+                busy.append((s0.astimezone(tz), e0.astimezone(tz)))
+        except Exception as exc:
+            res.errors.append(str(exc)[:200])
     try:
+        if outlook:
+            raise StopIteration
         resp = pod.connectors.execute("google_calendar", "GOOGLECALENDAR_EVENTS_LIST", {
             "calendarId": "primary",
             "timeMin": search_from.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -86,6 +127,8 @@ async def find_free_slots(ctx: FunctionContext, data: FindFreeSlotsInput) -> Fin
                 busy.append((s.astimezone(tz), e.astimezone(tz)))
             if not res.timezone:
                 res.timezone = (ev.get("start") or {}).get("timeZone") or ""
+    except StopIteration:
+        pass
     except Exception as exc:
         # No calendar is a soft failure — the composer just offers nothing specific.
         res.errors.append(str(exc)[:200])

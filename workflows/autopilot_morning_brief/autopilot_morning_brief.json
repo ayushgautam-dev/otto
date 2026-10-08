@@ -18,7 +18,7 @@
         "input_mapping": {
           "message": {
             "type": "literal",
-            "value": "Load the open-loops-brief skill and follow the morning brief section exactly. Compose today's brief, store one row in briefs, then send it with send_brief_email. Ground every line in a real commitment and never invent one. If it has already gone today, say so and stop rather than sending a second copy."
+            "value": "Load the otto-brief skill and follow the morning brief section exactly. Compose today's brief, store one row in briefs, then send it with send_brief_email. Ground every line in a real commitment and never invent one. If it has already gone today, say so and stop rather than sending a second copy."
           }
         }
       },

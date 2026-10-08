@@ -3,7 +3,7 @@
 Paste this into a fresh pod's chat.
 
 ```
-Set this pod up from https://github.com/ayushgautam-dev/open-loops: clone it and run
+Set this pod up from https://github.com/ayushgautam-dev/otto: clone it and run
 ./setup.sh — nothing else, and nothing invented. It ends with a note addressed to
 you; follow it.
 ```

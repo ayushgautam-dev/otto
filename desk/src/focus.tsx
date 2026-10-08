@@ -95,7 +95,7 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
   const lemWrite = () => lem.ask(
     l.side === 'them'
       ? `Write a short nudge to ${l.person} about "${l.obligation}" (commitment ${l.id}) in my voice, as a reply on the same conversation. Put it in the pending draft for that commitment if there is one. End with the card marker.`
-      : `Prepare "${l.obligation}" for me (commitment ${l.id}). Use the open-loops-write skill and pick the right shape. End with the card marker.`,
+      : `Prepare "${l.obligation}" for me (commitment ${l.id}). Use the otto-write skill and pick the right shape. End with the card marker.`,
     { key: `loop:${l.id}`, title: l.obligation, about: `the commitment "${l.obligation}" (loop_id ${l.id})` })
 
   const hasWork = !!draft || docs.items.length > 0

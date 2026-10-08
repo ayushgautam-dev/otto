@@ -217,7 +217,10 @@ export function cleanTitle(t?: string | null): string {
   return String(t ?? '').replace(/^\s*\[[^\]]*\]\s*/, '').trim()
 }
 
-export const isGmailThread = (ref?: string | null) => !!ref && /^[0-9a-f]{10,24}$/.test(ref)
+/** A mail conversation the thread reader can open: a Gmail thread id, or an Outlook
+ *  conversation (`outlook:<id>`). The name is from when Gmail was the only mailbox. */
+export const isGmailThread = (ref?: string | null) => !!ref && (/^[0-9a-f]{10,24}$/.test(ref) || ref.startsWith('outlook:'))
+export const isOutlookThread = (ref?: string | null) => !!ref && ref.startsWith('outlook:')
 
 export const favicon = (domain?: string | null) =>
   domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=64` : null

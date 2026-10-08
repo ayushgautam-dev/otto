@@ -18,7 +18,7 @@
         "input_mapping": {
           "message": {
             "type": "literal",
-            "value": "Load the open-loops-voice skill and follow it exactly: learn how the person writes from their own sent mail and write /me/voice.md. Never overwrite settings voice_doc if it already has text. Send nothing. Report in one line."
+            "value": "Load the otto-voice skill and follow it exactly: learn how the person writes from their own sent mail and write /me/voice.md. Never overwrite settings voice_doc if it already has text. Send nothing. Report in one line."
           }
         }
       },

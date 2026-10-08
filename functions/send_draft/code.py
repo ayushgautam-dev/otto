@@ -65,6 +65,45 @@ def _emails(xs: list[str] | None) -> list[str]:
     return out
 
 
+# ---- Outlook. A thread_ref of "outlook:<conversation id>" is an Outlook conversation. ----
+
+def _o_unwrap(resp) -> dict:
+    resp = resp.to_dict() if hasattr(resp, "to_dict") else resp
+    r = resp.get("result", resp) if isinstance(resp, dict) else {}
+    d = r.get("data", r) if isinstance(r, dict) else {}
+    return d if isinstance(d, dict) else {}
+
+
+def _o_conversation(pod, conv: str, detail: str = "minimal") -> list[dict]:
+    """Every message in one Outlook conversation, across folders, oldest first."""
+    body = _o_unwrap(pod.connectors.execute("outlook", "OUTLOOK_LIST_MESSAGES", {
+        "folder": "allfolders", "top": 50, "response_detail": detail,
+        "filter": "conversationId eq '" + conv.replace("'", "''") + "'",
+    }))
+    msgs = [m for m in (body.get("value") or []) if not m.get("isDraft")]
+    return sorted(msgs, key=lambda m: m.get("receivedDateTime") or m.get("sentDateTime") or "")
+
+
+def _o_me(pod) -> str:
+    try:
+        p = _o_unwrap(pod.connectors.execute("outlook", "OUTLOOK_GET_PROFILE", {"user_id": "me"}))
+        return (p.get("mail") or p.get("userPrincipalName") or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _mail_is_outlook(pod) -> bool:
+    """With no thread to tell us, send through whichever mailbox the person connected:
+    Outlook only when it is connected and Gmail is not."""
+    try:
+        st = pod.connectors.status()
+        on = {str(a.get("connector_id") or "").lower() for a in (st.get("connected_accounts") or st.get("accounts") or [])
+              if isinstance(a, dict) and a.get("status") == "CONNECTED"}
+        return "outlook" in on and "gmail" not in on
+    except Exception:
+        return False
+
+
 async def send_draft(ctx: FunctionContext, data: SendDraftInput) -> SendDraftResult:
     pod = Pod.from_env()
     res = SendDraftResult()
@@ -101,8 +140,9 @@ async def send_draft(ctx: FunctionContext, data: SendDraftInput) -> SendDraftRes
         return res
 
     thread_ref = (data.thread_ref if data.thread_ref is not None else d.get("thread_ref") or "").strip()
-    # granola:/gcal:/seed- refs are not Gmail threads — replying into them would fail
-    if thread_ref and not re.fullmatch(r"[0-9a-f]{10,24}", thread_ref):
+    outlook_conv = thread_ref[8:] if thread_ref.startswith("outlook:") else ""
+    # granola:/gcal:/seed- refs are not mail threads — replying into them would fail
+    if thread_ref and not outlook_conv and not re.fullmatch(r"[0-9a-f]{10,24}", thread_ref):
         thread_ref = ""
     cc = [e for e in _emails(data.cc) if e != to_email.lower()]
     extra = [e for e in _emails(data.extra_to) if e != to_email.lower() and e not in cc]
@@ -117,32 +157,58 @@ async def send_draft(ctx: FunctionContext, data: SendDraftInput) -> SendDraftRes
             + data.appendix_html + "</div>"
         )
 
-    # --- the send itself. Everything after this only runs if Gmail accepted. ---
-    try:
-        if thread_ref:
-            res.mode = "reply"
-            args = {
-                "thread_id": thread_ref,
-                "recipient_email": to_email,
-                "message_body": html_body,
-                "is_html": True,
-            }
-        else:
-            res.mode = "new"
-            args = {
-                "recipient_email": to_email,
-                "subject": subject or "(no subject)",
-                "body": html_body,
-                "is_html": True,
-            }
-        if cc:
-            args["cc"] = cc
-        if extra:
-            args["extra_recipients"] = extra
-        pod.connectors.execute("gmail", "GMAIL_REPLY_TO_THREAD" if thread_ref else "GMAIL_SEND_EMAIL", args)
-    except Exception as exc:
-        res.error = f"Gmail refused the message: {str(exc)[:200]}"
-        return res          # nothing marked, nothing closed — the draft stays pending
+    # --- the send itself. Everything after this only runs if the mailbox accepted. ---
+    if outlook_conv or (not thread_ref and _mail_is_outlook(pod)):
+        try:
+            last = None
+            if outlook_conv:
+                me = _o_me(pod)
+                msgs = _o_conversation(pod, outlook_conv)
+                # reply to the latest message that is not the person's own, else the latest
+                theirs = [m for m in msgs if ((m.get("from") or {}).get("emailAddress") or {}).get("address", "").lower() != me]
+                last = (theirs or msgs or [None])[-1]
+            if last:
+                res.mode = "reply"
+                args = {"message_id": last["id"], "comment": html_body, "is_html": True, "user_id": "me"}
+                if cc or extra:
+                    args["cc_emails"] = cc + extra
+                pod.connectors.execute("outlook", "OUTLOOK_REPLY_EMAIL", args)
+            else:
+                res.mode = "new"
+                args = {"to": ", ".join([to_email] + extra), "subject": subject or "(no subject)",
+                        "body": html_body, "is_html": True, "user_id": "me", "save_to_sent_items": True}
+                if cc:
+                    args["cc_emails"] = cc
+                pod.connectors.execute("outlook", "OUTLOOK_SEND_EMAIL", args)
+        except Exception as exc:
+            res.error = f"Outlook refused the message: {str(exc)[:200]}"
+            return res
+    else:
+        try:
+            if thread_ref:
+                res.mode = "reply"
+                args = {
+                    "thread_id": thread_ref,
+                    "recipient_email": to_email,
+                    "message_body": html_body,
+                    "is_html": True,
+                }
+            else:
+                res.mode = "new"
+                args = {
+                    "recipient_email": to_email,
+                    "subject": subject or "(no subject)",
+                    "body": html_body,
+                    "is_html": True,
+                }
+            if cc:
+                args["cc"] = cc
+            if extra:
+                args["extra_recipients"] = extra
+            pod.connectors.execute("gmail", "GMAIL_REPLY_TO_THREAD" if thread_ref else "GMAIL_SEND_EMAIL", args)
+        except Exception as exc:
+            res.error = f"Gmail refused the message: {str(exc)[:200]}"
+            return res          # nothing marked, nothing closed — the draft stays pending
 
     res.sent = True
     if not d:

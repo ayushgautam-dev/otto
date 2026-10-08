@@ -7,32 +7,32 @@
       "visibility": "POD"
     },
     {
-      "description": "Lem's 'open-loops-brief' skill \u2014 installed to /skills/open-loops-brief/SKILL.md by setup.sh or the app's first run",
-      "path": "/setup/skills/open-loops-brief.md",
+      "description": "Lem's 'otto-brief' skill \u2014 installed to /skills/otto-brief/SKILL.md by setup.sh or the app's first run",
+      "path": "/setup/skills/otto-brief.md",
       "search_enabled": false,
       "visibility": "POD"
     },
     {
-      "description": "Lem's 'open-loops-notice' skill \u2014 installed to /skills/open-loops-notice/SKILL.md by setup.sh or the app's first run",
-      "path": "/setup/skills/open-loops-notice.md",
+      "description": "Lem's 'otto-notice' skill \u2014 installed to /skills/otto-notice/SKILL.md by setup.sh or the app's first run",
+      "path": "/setup/skills/otto-notice.md",
       "search_enabled": false,
       "visibility": "POD"
     },
     {
-      "description": "Lem's 'open-loops-voice' skill \u2014 installed to /skills/open-loops-voice/SKILL.md by setup.sh or the app's first run",
-      "path": "/setup/skills/open-loops-voice.md",
+      "description": "Lem's 'otto-voice' skill \u2014 installed to /skills/otto-voice/SKILL.md by setup.sh or the app's first run",
+      "path": "/setup/skills/otto-voice.md",
       "search_enabled": false,
       "visibility": "POD"
     },
     {
-      "description": "Lem's 'open-loops-work' skill \u2014 installed to /skills/open-loops-work/SKILL.md by setup.sh or the app's first run",
-      "path": "/setup/skills/open-loops-work.md",
+      "description": "Lem's 'otto-work' skill \u2014 installed to /skills/otto-work/SKILL.md by setup.sh or the app's first run",
+      "path": "/setup/skills/otto-work.md",
       "search_enabled": false,
       "visibility": "POD"
     },
     {
-      "description": "Lem's 'open-loops-write' skill \u2014 installed to /skills/open-loops-write/SKILL.md by setup.sh or the app's first run",
-      "path": "/setup/skills/open-loops-write.md",
+      "description": "Lem's 'otto-write' skill \u2014 installed to /skills/otto-write/SKILL.md by setup.sh or the app's first run",
+      "path": "/setup/skills/otto-write.md",
       "search_enabled": false,
       "visibility": "POD"
     }

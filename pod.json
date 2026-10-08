@@ -8,14 +8,9 @@
   "icon_url": null,
   "name": "Otto",
   "variables": {
-    "open_loops_desk_slug": {
-      "default": "open-loops-desk",
-      "description": "Public URL slug for app 'open-loops-desk' (unique platform-wide; a suffix is added on collision)",
-      "type": "app_slug"
-    },
-    "open_loops_slug": {
-      "default": "open-loops",
-      "description": "Public URL slug for app 'open-loops' (unique platform-wide; a suffix is added on collision)",
+    "otto_slug": {
+      "default": "otto",
+      "description": "Public URL slug for app 'otto' (unique platform-wide; a suffix is added on collision)",
       "type": "app_slug"
     }
   }

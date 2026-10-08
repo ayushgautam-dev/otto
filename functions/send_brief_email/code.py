@@ -93,13 +93,30 @@ async def send_brief_email(ctx: FunctionContext, data: SendBriefInput) -> SendBr
     body = brief["content"].strip()
     res.subject = f"{data.subject_prefix} — {datetime.now(timezone.utc).strftime('%a %d %b')}"
 
+    # Through whichever mailbox the person connected: Outlook only when Gmail is not there.
+    use_outlook = False
     try:
-        pod.connectors.execute("gmail", "GMAIL_SEND_EMAIL", {
-            "recipient_email": me,
-            "subject": res.subject,
-            "body": _md_to_html(body),
-            "is_html": True,
-        })
+        st = pod.connectors.status()
+        on = {str(a.get("connector_id") or "").lower()
+              for a in (st.get("connected_accounts") or st.get("accounts") or [])
+              if isinstance(a, dict) and a.get("status") == "CONNECTED"}
+        use_outlook = "outlook" in on and "gmail" not in on
+    except Exception:
+        pass
+
+    try:
+        if use_outlook:
+            pod.connectors.execute("outlook", "OUTLOOK_SEND_EMAIL", {
+                "to": me, "subject": res.subject, "body": _md_to_html(body),
+                "is_html": True, "user_id": "me",
+            })
+        else:
+            pod.connectors.execute("gmail", "GMAIL_SEND_EMAIL", {
+                "recipient_email": me,
+                "subject": res.subject,
+                "body": _md_to_html(body),
+                "is_html": True,
+            })
         res.sent = True
         res.reason = "sent"
     except Exception as exc:

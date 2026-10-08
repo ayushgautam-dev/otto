@@ -135,7 +135,7 @@ const MARKS: Partial<Record<string, () => React.JSX.Element>> = {
 
 /* The three sources everybody is asked to connect carry their owners' own artwork, kept
    as files beside the app (public/marks) rather than redrawn here. */
-const OFFICIAL = new Set(['gmail', 'google_calendar', 'granola'])
+const OFFICIAL = new Set(['gmail', 'google_calendar', 'outlook', 'granola'])
 
 /** The icon tile used by both onboarding and the Powers-style rows. */
 export function SourceMark({ app, label }: { app: string; label?: string }) {

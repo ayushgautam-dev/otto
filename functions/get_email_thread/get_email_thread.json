@@ -12,6 +12,13 @@
         "permission_ids": [
           "connector.use"
         ],
+        "resource_name": "outlook",
+        "resource_type": "connector"
+      },
+      {
+        "permission_ids": [
+          "connector.use"
+        ],
         "resource_name": "gmail",
         "resource_type": "connector"
       }

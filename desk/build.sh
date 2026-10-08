@@ -3,7 +3,7 @@
 #
 #   ./desk/build.sh
 #
-# `apps/open-loops-desk/source/` is a prebuilt static site — index.html and its assets, no
+# `apps/otto/source/` is a prebuilt static site — index.html and its assets, no
 # package.json — and that is why a fresh pod imports in seconds: with a package.json
 # there, every import runs npm and a Vite build that needs three VITE_LEMMA_* values a
 # fresh pod has never had, fails at the app step (imported last), and takes the
@@ -15,7 +15,7 @@
 # so the variables are unset and any .env file is moved aside for the build.
 set -euo pipefail
 cd "$(dirname "$0")"
-OUT="../apps/open-loops-desk/source"
+OUT="../apps/otto/source"
 ENVS=(.env.local .env .env.production .env.production.local)
 
 [ -d node_modules ] || npm ci

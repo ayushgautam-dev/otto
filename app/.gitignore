@@ -1,7 +1,0 @@
-node_modules/
-dist/
-*.tsbuildinfo
-.env.local
-.env.*.local
-.lemma.env
-.lemma.*.env

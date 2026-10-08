@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Set a fresh pod up as Open Loops. One command, about three minutes (measured on a
+# Set a fresh pod up as Otto. One command, about three minutes (measured on a
 # fresh pod: the import is almost all of it — thirty-odd functions and two apps).
 #
 #   LEMMA_POD_ID=<pod> ./setup.sh
@@ -30,7 +30,7 @@ export LEMMA_POD_ID
 #    server, and the CLI's fallback is the pod id's first EIGHT hex characters, which
 #    two pods created in the same moment share. The id's tail is random; use that.
 TAIL="$(printf '%s' "${LEMMA_POD_ID//-/}" | tail -c 12)"
-VARS=(--var "open_loops_slug=open-loops-$TAIL" --var "open_loops_desk_slug=open-loops-desk-$TAIL")
+VARS=(--var "otto_slug=otto-$TAIL")
 LOG="$(mktemp)"
 echo "setting up — about three minutes"
 if ! lemma pods import . --set-pod-meta --with-files --with-data "${VARS[@]}" >"$LOG" 2>&1; then
@@ -85,8 +85,7 @@ done
 
 # 4. Read back what landed. Independent, so all at once.
 D="$(mktemp -d)"
-lemma apps get open-loops-desk --output json               >"$D/desk" 2>/dev/null &
-lemma apps get open-loops --output json                    >"$D/app"  2>/dev/null &
+lemma apps get otto --output json                          >"$D/desk" 2>/dev/null &
 lemma query run "select count(*) as n from autopilot_catalog" --json >"$D/menu" 2>/dev/null &
 lemma files ls /memory --json                              >"$D/mem"  2>/dev/null &
 wait
@@ -97,7 +96,6 @@ try: print(json.load(open(sys.argv[1])).get("url") or "")
 except Exception: print("")
 ' "$1"; }
 DESK_URL="$(url "$D/desk")"
-APP_URL="$(url "$D/app")"
 MENU="$(python3 -c '
 import json, sys
 try:
@@ -145,7 +143,6 @@ cat <<TXT
   To start, open it and connect Gmail — Calendar and Granola help, but are
   optional. The desk opens in about a minute; three weeks of history fill in behind it:
   $DESK_URL
-  (the same pod, in a simpler layout: $APP_URL)
 
   Your team can have it too: add them to this pod and they open the same link.
   Their mail, their commitments and their autopilots stay private to them.

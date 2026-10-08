@@ -70,7 +70,9 @@ Prefer three sentences to six. Ask one clear question, not three.
 
 
 class BootstrapInput(BaseModel):
-    include_examples: bool = True   # seed the three default tracks
+    # Off unless somebody asks for it: nobody starts with boards. A tracker is created
+    # (create_tracker) only when a real pipeline shows up in the person's own work.
+    include_examples: bool = False
 
 
 class BootstrapResult(BaseModel):

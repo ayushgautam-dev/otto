@@ -81,10 +81,86 @@ def _iso(ts) -> str:
         return raw
 
 
+# ---- Outlook. A thread_ref of "outlook:<conversation id>" is an Outlook conversation. ----
+
+def _o_unwrap(resp) -> dict:
+    resp = resp.to_dict() if hasattr(resp, "to_dict") else resp
+    r = resp.get("result", resp) if isinstance(resp, dict) else {}
+    d = r.get("data", r) if isinstance(r, dict) else {}
+    return d if isinstance(d, dict) else {}
+
+
+def _o_conversation(pod, conv: str, detail: str = "minimal") -> list[dict]:
+    """Every message in one Outlook conversation, across folders, oldest first."""
+    body = _o_unwrap(pod.connectors.execute("outlook", "OUTLOOK_LIST_MESSAGES", {
+        "folder": "allfolders", "top": 50, "response_detail": detail,
+        "filter": "conversationId eq '" + conv.replace("'", "''") + "'",
+    }))
+    msgs = [m for m in (body.get("value") or []) if not m.get("isDraft")]
+    return sorted(msgs, key=lambda m: m.get("receivedDateTime") or m.get("sentDateTime") or "")
+
+
+def _o_me(pod) -> str:
+    try:
+        p = _o_unwrap(pod.connectors.execute("outlook", "OUTLOOK_GET_PROFILE", {"user_id": "me"}))
+        return (p.get("mail") or p.get("userPrincipalName") or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _o_text(body: dict | None, preview: str = "") -> str:
+    import html as _html
+    content = (body or {}).get("content") or ""
+    if ((body or {}).get("contentType") or "").lower() == "html":
+        content = re.sub(r"(?is)<(style|script|head)[^>]*>.*?</\1>", " ", content)
+        content = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</tr>|</li>", "\n", content)
+        content = _html.unescape(re.sub(r"<[^>]+>", "", content))
+    content = re.sub(r"[ \t\r\f\v]+", " ", content)
+    return re.sub(r"\n\s*\n\s*\n+", "\n\n", content).strip() or (preview or "").strip()
+
+
+def _outlook_thread(pod, conv: str, res: "GetThreadResult") -> "GetThreadResult":
+    try:
+        msgs = _o_conversation(pod, conv, "full")
+    except Exception as exc:
+        res.error = f"Outlook would not open it: {str(exc)[:160]}"
+        return res
+    me = _o_me(pod)
+    for m in msgs:
+        f = (m.get("from") or m.get("sender") or {}).get("emailAddress") or {}
+        email = (f.get("address") or "").lower()
+        atts = []
+        if m.get("hasAttachments"):
+            try:
+                a = _o_unwrap(pod.connectors.execute("outlook", "OUTLOOK_LIST_OUTLOOK_ATTACHMENTS", {"message_id": m.get("id")}))
+                atts = [Attachment(filename=x.get("name") or "file", mime=x.get("contentType") or "", attachment_id=x.get("id") or "")
+                        for x in (a.get("value") or []) if x.get("id") and x.get("name") and not x.get("isInline")]
+            except Exception:
+                atts = []
+        res.messages.append(ThreadMessage(
+            id=str(m.get("id") or ""),
+            from_name=(f.get("name") or email.split("@")[0]).strip(),
+            from_email=email,
+            to=[(x.get("emailAddress") or {}).get("address", "").lower() for x in (m.get("toRecipients") or [])],
+            cc=[(x.get("emailAddress") or {}).get("address", "").lower() for x in (m.get("ccRecipients") or [])],
+            date=_iso(m.get("receivedDateTime") or m.get("sentDateTime")),
+            subject=(m.get("subject") or "").strip(),
+            body=_strip(_o_text(m.get("body"), m.get("bodyPreview") or "")),
+            mine=bool(me and email == me),
+            attachments=atts,
+        ))
+    res.subject = next((x.subject for x in res.messages if x.subject), "")
+    if not res.messages:
+        res.error = "No messages came back for this conversation."
+    return res
+
+
 async def get_email_thread(ctx: FunctionContext, data: GetThreadInput) -> GetThreadResult:
     pod = Pod.from_env()
     res = GetThreadResult()
     tid = (data.thread_id or "").strip()
+    if tid.startswith("outlook:"):
+        return _outlook_thread(pod, tid[8:], res)
     if not re.fullmatch(r"[0-9a-f]{10,24}", tid):
         res.error = "not an email conversation"
         return res

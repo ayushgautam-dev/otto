@@ -77,6 +77,36 @@ def _ts(value: str) -> float:
         return 0.0
 
 
+def _outlook_messages(pod, conv: str) -> list[dict]:
+    """One Outlook conversation in the shape the Gmail branch reads: when, and who from."""
+    resp = pod.connectors.execute("outlook", "OUTLOOK_LIST_MESSAGES", {
+        "folder": "allfolders", "top": 50, "response_detail": "minimal",
+        "filter": "conversationId eq '" + conv.replace("'", "''") + "'",
+    }).to_dict()
+    r = resp.get("result", resp)
+    body = r.get("data", r) if isinstance(r, dict) else {}
+    out = []
+    for m in (body.get("value") or []):
+        if m.get("isDraft"):
+            continue
+        out.append({
+            "messageTimestamp": m.get("receivedDateTime") or m.get("sentDateTime") or "",
+            "sender": ((m.get("from") or {}).get("emailAddress") or {}).get("address", ""),
+            "labelIds": [],
+        })
+    return sorted(out, key=lambda m: m["messageTimestamp"])
+
+
+def _outlook_me(pod) -> str:
+    try:
+        resp = pod.connectors.execute("outlook", "OUTLOOK_GET_PROFILE", {"user_id": "me"}).to_dict()
+        r = resp.get("result", resp)
+        d = r.get("data", r) if isinstance(r, dict) else {}
+        return (d.get("mail") or d.get("userPrincipalName") or "").strip().lower()
+    except Exception:
+        return ""
+
+
 async def autoresolve_loops(ctx: FunctionContext, data: AutoResolveInput) -> AutoResolveResult:
     pod = Pod.from_env()
     my_email = (ctx.user_email or "").lower()
@@ -89,6 +119,7 @@ async def autoresolve_loops(ctx: FunctionContext, data: AutoResolveInput) -> Aut
         f"where l.status='open' and coalesce(l.thread_ref,'')<>'' limit {data.max_loops}"
     ).to_dict()["items"]
 
+    outlook_me: str | None = None
     for loop in loops:
         thread_ref = (loop.get("thread_ref") or "").strip()
         if not thread_ref:
@@ -107,15 +138,26 @@ async def autoresolve_loops(ctx: FunctionContext, data: AutoResolveInput) -> Aut
         else:
             continue                      # going_cold has no reply that settles it
 
-        try:
-            resp = pod.connectors.execute("gmail", "GMAIL_FETCH_MESSAGE_BY_THREAD_ID", {
-                "thread_id": thread_ref,
-            }).to_dict()
-        except Exception:
-            continue
-        r = resp.get("result", resp)
-        body = r.get("data", r) if isinstance(r, dict) else {}
-        msgs = body.get("messages") or r.get("messages") or []
+        mine = my_email
+        if thread_ref.startswith("outlook:"):
+            # the Outlook mailbox may not be the address the person signs in to Lemma with
+            if outlook_me is None:
+                outlook_me = _outlook_me(pod)
+            mine = outlook_me or my_email
+            try:
+                msgs = _outlook_messages(pod, thread_ref[8:])
+            except Exception:
+                continue
+        else:
+            try:
+                resp = pod.connectors.execute("gmail", "GMAIL_FETCH_MESSAGE_BY_THREAD_ID", {
+                    "thread_id": thread_ref,
+                }).to_dict()
+            except Exception:
+                continue
+            r = resp.get("result", resp)
+            body = r.get("data", r) if isinstance(r, dict) else {}
+            msgs = body.get("messages") or r.get("messages") or []
         if not msgs:
             continue
 
@@ -126,7 +168,7 @@ async def autoresolve_loops(ctx: FunctionContext, data: AutoResolveInput) -> Aut
             if when <= opened:
                 continue
             labels = m.get("labelIds") or []
-            from_me = "SENT" in labels or _addr(m.get("sender", "")) == my_email
+            from_me = "SENT" in labels or _addr(m.get("sender", "")) == mine
             if from_me == want_from_me:
                 settled_on = (m.get("messageTimestamp") or "")[:10]
                 break

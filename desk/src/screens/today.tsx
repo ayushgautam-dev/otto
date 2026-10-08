@@ -238,13 +238,25 @@ interface OpenRow extends LoopRow {
 /** Where a person belongs — the same rule as the old app's People/Companies lenses: someone
  *  at a company you deal with lives under that company, so People is your team,
  *  candidates and individuals. */
-function bucketOf(l: OpenRow, myDomain: string): 'team' | 'candidates' | 'individuals' | 'company' {
+function bucketOf(l: OpenRow, myDomain: string): string {
   const dom = (l.person_email ?? '').split('@')[1]?.toLowerCase() ?? ''
   if (l.relationship === 'teammate' || (myDomain && dom === myDomain)) return 'team'
-  if (l.relationship === 'candidate') return 'candidates'
+  // a kind of relationship the person really has gets a section of its own
+  if (l.relationship && GROUPED[l.relationship]) return l.relationship
   if (!l.company_id || PERSONAL.test(l.person_email ?? '')) return 'individuals'
   return 'company'
 }
+
+/** Sections on the Person view, in order. Only the ones with somebody in them are shown,
+ *  so someone who is not hiring never sees "Candidates". */
+const GROUPED: Record<string, string> = {
+  candidate: 'Candidates', investor: 'Investors', advisor: 'Advisors', partner: 'Partners',
+}
+const PERSON_SECTIONS: { key: string; label: string }[] = [
+  { key: 'team', label: 'Your team' },
+  ...Object.entries(GROUPED).map(([key, label]) => ({ key, label })),
+  { key: 'individuals', label: 'Individuals' },
+]
 
 function PersonCard({ loops, onChange }: { loops: OpenRow[]; onChange: () => void }) {
   const { open } = useNav()
@@ -345,9 +357,7 @@ function ByPerson({ rows, myDomain, onChange, toCompanies }: {
   const trackers = useTrackers('person')
   const [board, setBoard] = useState<string | null>(null)
   const showing = trackers.find((t) => t.id === board)
-  const sections: { key: 'team' | 'candidates' | 'individuals'; label: string }[] = [
-    { key: 'team', label: 'Your team' }, { key: 'candidates', label: 'Candidates' }, { key: 'individuals', label: 'Individuals' },
-  ]
+  const sections = PERSON_SECTIONS
   const atCompanies = rows.filter((l) => bucketOf(l, myDomain) === 'company')
   const any = sections.some((sec) => rows.some((l) => bucketOf(l, myDomain) === sec.key))
   return (

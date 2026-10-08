@@ -1,0 +1,6 @@
+{
+  "description": "Otto: your teammate for loose ends.",
+  "name": "otto",
+  "public_slug": "${otto_slug}",
+  "visibility": "PUBLIC"
+}

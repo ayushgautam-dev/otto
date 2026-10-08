@@ -103,9 +103,12 @@ export function Conversation({ threadRef }: { threadRef: string }) {
                 </div>
               )
             })}
-            <a className="convo-gmail" href={`https://mail.google.com/mail/u/0/#all/${threadRef}`} target="_blank" rel="noreferrer">
-              Open in Gmail <ExternalLink size={11} />
-            </a>
+            {/* an Outlook conversation has no stable web address to link to, so only Gmail gets one */}
+            {!threadRef.startsWith('outlook:') && (
+              <a className="convo-gmail" href={`https://mail.google.com/mail/u/0/#all/${threadRef}`} target="_blank" rel="noreferrer">
+                Open in Gmail <ExternalLink size={11} />
+              </a>
+            )}
           </div>
         )
       })()}

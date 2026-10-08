@@ -182,6 +182,18 @@ export async function quickStart(sources: string[], say: (phase: string) => void
       sync('sync_calendar', { past_days: covered, future_days: 14, max_events: 60, batch_size: 10 }))
   }
 
+  if (on('outlook')) {
+    // Microsoft 365: mail and calendar come through the one connection
+    say('mail')
+    await attempt('Mail', async () => {
+      const first = await sync('sync_outlook', { what: 'mail', days: 2, max_messages: SLICE_MAX, batch_size: 10 })
+      if (first.seen < 15) { await sync('sync_outlook', { what: 'mail', days: 5, max_messages: SLICE_MAX, batch_size: 10 }); covered = Math.max(covered, 5) }
+    })
+    say('calendar')
+    await attempt('Calendar', () =>
+      sync('sync_outlook', { what: 'calendar', past_days: covered, future_days: 14, max_events: 60, batch_size: 10 }))
+  }
+
   const unread = await unreadCount()
   const state: CatchUp = { covered, target: WINDOW_DAYS, sources, extras: false, done: false, unread }
   await putSetting('catchup', JSON.stringify(state))

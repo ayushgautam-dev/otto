@@ -21,20 +21,15 @@ import { CloneGate } from './gate'
 import { Profile } from './profile'
 import { ensureMyAutopilots, ensureSkills } from './autopilot-sync'
 import { useCatchUp, CatchUpCtx, type CatchUp } from './backfill'
-import { useTeammate, tm, DEFAULT_TEAMMATE } from './teammate'
+import { useTeammate, useTeammateFace, tm, DEFAULT_TEAMMATE } from './teammate'
 import './styles.css'
 
 const queryClient = new QueryClient()
 
-/** The loop mark: an almost-closed ring — the thing this product exists to close. */
+/** The teammate's face: the pod's own icon when it has one, otherwise the default. */
 function Mark() {
-  return (
-    <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden>
-      <circle cx="16" cy="16" r="10.5" fill="none" stroke="currentColor" strokeWidth="3.2"
-        strokeLinecap="round" strokeDasharray="56 66" transform="rotate(-50 16 16)" />
-      <circle cx="24.6" cy="9.6" r="2.6" fill="var(--ember)" />
-    </svg>
-  )
+  const { icon } = useTeammateFace()
+  return <img className="rail-face" src={icon || `${import.meta.env.BASE_URL}favicon.svg`} alt="" width={30} height={30} />
 }
 
 function ThemeToggle() {

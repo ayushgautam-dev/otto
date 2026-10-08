@@ -154,6 +154,9 @@ async def catch_up_step(ctx: FunctionContext, data: StepInput) -> StepResult:
         if "google_calendar" in sources:
             load("sync_calendar", {
                 "past_days": target, "future_days": 14, "max_events": 150, "batch_size": 10})
+        if "outlook" in sources:
+            load("sync_outlook", {
+                "what": "calendar", "past_days": target, "future_days": 14, "max_events": 150, "batch_size": 10})
         if "granola" in sources:
             load("sync_granola", {"time_range": "last_30_days", "batch_size": 10})
         state["extras"] = True
@@ -164,6 +167,11 @@ async def catch_up_step(ctx: FunctionContext, data: StepInput) -> StepResult:
             load("sync_gmail", {
                 "query": f"after:{_day(to + 1)} before:{_day(max(covered - 1, 0))} {MAIL_FILTER}",
                 "max_messages": SLICE_MAX, "batch_size": 10})
+        if "outlook" in sources:
+            load("sync_outlook", {
+                "what": "mail", "max_messages": SLICE_MAX, "batch_size": 10,
+                "since": (_now() - timedelta(days=to + 1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "until": (_now() - timedelta(days=max(covered - 1, 0))).strftime("%Y-%m-%dT%H:%M:%SZ")})
         state["covered"] = res.covered = to
         res.did = (res.did + "; " if res.did else "") + f"loaded mail back to {to} days"
     elif not res.did:

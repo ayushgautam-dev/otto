@@ -1,11 +1,11 @@
-<h1 align="center">Open Loops</h1>
+<h1 align="center">Otto</h1>
 
 <p align="center"><b>A chief of staff for your inbox.</b><br>
 It reads your mail, calendar and meeting notes, keeps track of what you owe people and
 what they owe you — and has the reply written before you ask.</p>
 
 <p align="center">
-  <a href="https://lemma.work/import/github/ayushgautam-dev/open-loops"><img alt="Install and Remix on Lemma" src="./docs/install-remix-on-lemma.svg" height="38"></a>
+  <a href="https://lemma.work/import/github/ayushgautam-dev/otto"><img alt="Install and Remix on Lemma" src="./docs/install-remix-on-lemma.svg" height="38"></a>
 </p>
 
 <p align="center">
@@ -21,7 +21,7 @@ the deck you said you would share on Friday, the person who is still waiting to 
 back from you — spread across a hundred threads, and remembered only when someone
 chases.
 
-Open Loops reads where those promises are actually made — your mail, your calendar,
+Otto reads where those promises are actually made — your mail, your calendar,
 your meeting notes — and keeps one list of everything still open, in plain sentences:
 
 > **Send Sam the pilot terms** — *you, 2 days*<br>
@@ -100,7 +100,7 @@ tell me which invoices are still unpaid"* — is yours alone.
 ## Install and remix on Lemma
 
 <p>
-  <a href="https://lemma.work/import/github/ayushgautam-dev/open-loops"><img alt="Install and Remix on Lemma" src="./docs/install-remix-on-lemma.svg" height="38"></a>
+  <a href="https://lemma.work/import/github/ayushgautam-dev/otto"><img alt="Install and Remix on Lemma" src="./docs/install-remix-on-lemma.svg" height="38"></a>
 </p>
 
 Press the button, then open the app. Its first run:
@@ -121,7 +121,7 @@ Paste [SETUP-PROMPT.md](SETUP-PROMPT.md) into a fresh pod's chat and the pod's o
 assistant does the rest. Or:
 
 ```bash
-git clone --depth 1 https://github.com/ayushgautam-dev/open-loops && cd open-loops
+git clone --depth 1 https://github.com/ayushgautam-dev/otto && cd otto
 LEMMA_POD_ID=<pod> ./setup.sh
 ```
 
@@ -133,18 +133,18 @@ with a note telling whoever ran it what to say next. About three minutes.
 
 ## Make it yours
 
-1. [Fork the repository](https://github.com/ayushgautam-dev/open-loops/fork).
+1. [Fork the repository](https://github.com/ayushgautam-dev/otto/fork).
 2. Change what Otto is told ([`files/memory/AGENTS.md`](files/memory/AGENTS.md) and the
    skills beside it), the autopilots, the tables or the app.
 3. Import your fork with `https://lemma.work/import/github/<you>/<your-repo>`.
-4. When it is useful, [show your version here](https://github.com/ayushgautam-dev/open-loops/issues/new?template=show-your-version.yml&title=%5BRemix%5D+).
+4. When it is useful, [show your version here](https://github.com/ayushgautam-dev/otto/issues/new?template=show-your-version.yml&title=%5BRemix%5D+).
 
 The apps ship built so an import needs no build and nothing configured. To change one,
 edit its project and rebuild:
 
 ```bash
 cd desk && npm install && npm run dev     # signed in as whoever the Lemma CLI is
-./desk/build.sh                           # rewrites apps/open-loops-desk/source/
+./desk/build.sh                           # rewrites apps/otto/source/
 ```
 
 `build.sh` clears every `VITE_LEMMA_*` setting and moves `.env` files aside first — Vite
@@ -161,7 +161,7 @@ before.
 | **workflows** | One per autopilot; most wake Otto with one precise instruction. |
 | **schedules** | Only `autopilot_loose_ends`, the trigger the pod shares. Everyone's autopilots are created per person, from the menu. |
 | **files** | `/memory/AGENTS.md` — Otto — and `/setup/skills/`, the five skills, installed on first run. |
-| **apps** | `open-loops-desk` and `open-loops` — two layouts over the same pod, shipped built. Their projects are `desk/` and `app/`. |
+| **apps** | `otto` — the desk, shipped built. Its project is `desk/`. |
 
 ## Known limits
 
@@ -174,8 +174,8 @@ before.
 ## Share
 
 <p>
-  <a href="https://twitter.com/intent/tweet?text=Open%20Loops%3A%20a%20chief%20of%20staff%20that%20reads%20your%20mail%2C%20tracks%20what%20you%20owe%20people%2C%20and%20writes%20the%20reply%20before%20you%20ask.&amp;url=https%3A%2F%2Fgithub.com%2Fayushgautam-dev%2Fopen-loops"><img alt="Share on X" src="https://img.shields.io/badge/Share_on_X-111111?style=for-the-badge&amp;logo=x"></a>
-  <a href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fgithub.com%2Fayushgautam-dev%2Fopen-loops"><img alt="Share on LinkedIn" src="https://img.shields.io/badge/Share_on_LinkedIn-0A66C2?style=for-the-badge&amp;logo=linkedin"></a>
+  <a href="https://twitter.com/intent/tweet?text=Otto%3A%20a%20chief%20of%20staff%20that%20reads%20your%20mail%2C%20tracks%20what%20you%20owe%20people%2C%20and%20writes%20the%20reply%20before%20you%20ask.&amp;url=https%3A%2F%2Fgithub.com%2Fayushgautam-dev%2Fotto"><img alt="Share on X" src="https://img.shields.io/badge/Share_on_X-111111?style=for-the-badge&amp;logo=x"></a>
+  <a href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fgithub.com%2Fayushgautam-dev%2Fotto"><img alt="Share on LinkedIn" src="https://img.shields.io/badge/Share_on_LinkedIn-0A66C2?style=for-the-badge&amp;logo=linkedin"></a>
 </p>
 
 Built with [Lemma](https://lemma.work) · [MIT licensed](LICENSE)

@@ -249,7 +249,7 @@ export function Letter({ draft, onSent, docs = [] }: { draft: DraftRow; onSent?:
       })
       if (!out?.sent) {
         setState('idle')
-        toast(out?.error ? `Not sent — ${out.error}` : 'Not sent — Gmail refused it')
+        toast(out?.error ? `Not sent — ${out.error}` : 'Not sent. Your mailbox refused it')
         return
       }
       await closeAfterSend({ ...draft, subject, body },

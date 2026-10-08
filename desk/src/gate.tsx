@@ -11,8 +11,8 @@ import { ArrowRight } from 'lucide-react'
    Lem's skills, read the last three weeks, set up their autopilots). These are
    build-time constants because a non-member cannot read the pod to look anything up. */
 export const TEMPLATE = {
-  repo: 'https://github.com/ayushgautam-dev/open-loops',
-  install: 'https://lemma.work/import/github/ayushgautam-dev/open-loops',
+  repo: 'https://github.com/ayushgautam-dev/otto',
+  install: 'https://lemma.work/import/github/ayushgautam-dev/otto',
 }
 
 export function CloneGate({ name }: { name?: string }) {

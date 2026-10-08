@@ -52,6 +52,8 @@ TOKEN_ONLY_SCHEMES = {"api_key", "bearer_token", "basic", "no_auth"}
 INSTALL = {
     "gmail": {"connector_id": "gmail", "kind": "composio"},
     "google_calendar": {"connector_id": "google_calendar", "kind": "composio"},
+    # Microsoft 365 mail and calendar, one sign-in
+    "outlook": {"connector_id": "outlook", "kind": "composio"},
     "googlemeet": {"connector_id": "googlemeet", "kind": "composio"},
     # optional: lets a document card become a real Google Doc
     "google_docs": {"connector_id": "google_docs", "kind": "composio"},

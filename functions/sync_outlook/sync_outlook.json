@@ -1,0 +1,29 @@
+{
+  "code": {
+    "$file": "code.py"
+  },
+  "config": null,
+  "description": "Outlook into the interaction ledger: recent mail (inbox and sent) and the Outlook calendar, shaped exactly like the Gmail and Google Calendar syncs and written through record_interaction. Forms no opinion about content.",
+  "icon_url": null,
+  "name": "sync_outlook",
+  "permissions": {
+    "grants": [
+      {
+        "permission_ids": [
+          "connector.use"
+        ],
+        "resource_name": "outlook",
+        "resource_type": "connector"
+      },
+      {
+        "permission_ids": [
+          "function.execute"
+        ],
+        "resource_name": "record_interaction",
+        "resource_type": "function"
+      }
+    ]
+  },
+  "type": "API",
+  "visibility": "POD"
+}
