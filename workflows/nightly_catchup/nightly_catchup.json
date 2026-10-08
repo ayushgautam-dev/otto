@@ -11,6 +11,12 @@
       "id": "e2",
       "label": null,
       "source": "cal",
+      "target": "outlook"
+    },
+    {
+      "id": "e_outlook",
+      "label": null,
+      "source": "outlook",
       "target": "end"
     }
   ],
@@ -61,6 +67,41 @@
       },
       "id": "cal",
       "label": "Catch up on calendar",
+      "position": null,
+      "type": "FUNCTION"
+    },
+    {
+      "config": {
+        "function_name": "sync_outlook",
+        "input_mapping": {
+          "batch_size": {
+            "type": "literal",
+            "value": 10
+          },
+          "days": {
+            "type": "literal",
+            "value": 3
+          },
+          "future_days": {
+            "type": "literal",
+            "value": 7
+          },
+          "max_messages": {
+            "type": "literal",
+            "value": 60
+          },
+          "past_days": {
+            "type": "literal",
+            "value": 7
+          },
+          "what": {
+            "type": "literal",
+            "value": "both"
+          }
+        }
+      },
+      "id": "outlook",
+      "label": "Outlook mail and calendar",
       "position": null,
       "type": "FUNCTION"
     },
