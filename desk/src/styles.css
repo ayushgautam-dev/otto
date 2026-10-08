@@ -1051,21 +1051,25 @@ body.focus-wide .focus { --focus-w: min(64vw, 1040px); }
 .fr-tile.is-on:not(:disabled) .fr-tile-s { color: var(--ink-3); font-weight: 500; }
 .mailbox-pick { border: 0; background: none; font: 500 13px var(--sans); color: var(--ink-2); cursor: pointer; outline: 0; margin-right: 10px; max-width: 200px; }
 
-/* ---- People: a plain, scannable table ---- */
-.book { border-radius: 16px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); overflow-x: auto; }
-.book-t { width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; min-width: 640px; }
-.book-t th { text-align: left; padding: 0; font-weight: 600; border-bottom: 1px solid var(--line); }
-.book-t th button { display: inline-flex; align-items: center; gap: 4px; width: 100%; padding: 11px 16px; border: 0; background: none; cursor: pointer; font: 600 11.5px var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
-.book-t th button:hover { color: var(--ink); }
-.book-t th.num button { justify-content: flex-end; }
-.book-t td { padding: 10px 16px; border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
-.book-t tbody tr:last-child td { border-bottom: 0; }
-.book-t tbody tr { cursor: pointer; outline: 0; }
-.book-t tbody tr:hover, .book-t tbody tr:focus-visible { background: var(--wash); }
-.book-t .num { text-align: right; font-variant-numeric: tabular-nums; }
-.book-n { font-weight: 550; color: var(--ink); }
-.book-dim { color: var(--ink-2); }
-.book-dom { margin-left: 8px; font-weight: 400; font-size: 12.5px; color: var(--ink-3); }
-.book-link { border: 0; background: none; padding: 0; font: inherit; color: var(--ink-2); cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-.book-link:hover { color: var(--ink); text-decoration: underline; }
-.book-open { display: inline-block; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--ember-soft); color: var(--ember-2); font-size: 12.5px; font-weight: 600; text-align: center; }
+/* ---- People: one list, grouped by company, every row the same shape ---- */
+.book { border-radius: 16px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+.book-g + .book-g { border-top: 1px solid var(--line); }
+.book-gh { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 16px 8px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.book-gh.plain { cursor: default; }
+button.book-gh:hover .book-gt { text-decoration: underline; }
+.book-gt { font: 400 19px/1.2 var(--serif); letter-spacing: -.005em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.book-gc { font-size: 12.5px; color: var(--ink-4); font-variant-numeric: tabular-nums; }
+.book-stage { flex: none; padding: 2px 8px; border-radius: 999px; background: var(--wash); font-size: 11.5px; font-weight: 550; color: var(--ink-2); }
+.book-go { flex: none; color: var(--ink-4); }
+.book-row { display: grid; grid-template-columns: 24px minmax(120px, 220px) minmax(0, 1fr) 64px 32px; align-items: center; gap: 12px; width: 100%; padding: 7px 16px 7px 44px; border: 0; background: none; color: inherit; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.book-row:hover { background: var(--wash); }
+.book-g > .book-row:last-child { padding-bottom: 12px; }
+.book-name { font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.book-role { color: var(--ink-3); font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.book-when { color: var(--ink-4); font-size: 12.5px; text-align: right; font-variant-numeric: tabular-nums; }
+.book-n { text-align: right; }
+.book-n b { display: inline-block; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--ember-soft); color: var(--ember-2); font-size: 12px; font-weight: 600; text-align: center; }
+@media (max-width: 700px) {
+  .book-row { grid-template-columns: 24px minmax(0, 1fr) 32px; padding-left: 16px; }
+  .book-role, .book-when { display: none; }
+}
