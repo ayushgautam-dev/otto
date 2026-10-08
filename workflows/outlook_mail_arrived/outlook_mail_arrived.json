@@ -1,0 +1,59 @@
+{
+  "description": "A new Outlook message fires this. It pulls the latest mail into the interaction ledger. Nothing here judges the mail: landing the row is enough, because the row insert then triggers the reader.",
+  "edges": [
+    {
+      "id": "e1",
+      "label": null,
+      "source": "pull",
+      "target": "end"
+    }
+  ],
+  "icon_url": null,
+  "mode": "GLOBAL",
+  "name": "outlook_mail_arrived",
+  "nodes": [
+    {
+      "config": {
+        "function_name": "sync_outlook",
+        "input_mapping": {
+          "batch_size": {
+            "type": "literal",
+            "value": 5
+          },
+          "days": {
+            "type": "literal",
+            "value": 1
+          },
+          "max_messages": {
+            "type": "literal",
+            "value": 10
+          },
+          "what": {
+            "type": "literal",
+            "value": "mail"
+          }
+        }
+      },
+      "id": "pull",
+      "label": "Pull the latest Outlook mail into the ledger",
+      "position": null,
+      "type": "FUNCTION"
+    },
+    {
+      "config": {},
+      "id": "end",
+      "label": "Done",
+      "position": null,
+      "type": "END"
+    }
+  ],
+  "start": {
+    "config": {
+      "connector_id": "outlook",
+      "connector_trigger_id": "outlook:composio:outlook_message_trigger",
+      "trigger_config": {}
+    },
+    "type": "EVENT"
+  },
+  "visibility": "POD"
+}

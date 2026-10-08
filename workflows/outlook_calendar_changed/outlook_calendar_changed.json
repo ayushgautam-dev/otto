@@ -1,0 +1,63 @@
+{
+  "description": "A change on the Outlook calendar fires this. It re-reads the days around now so a new or moved meeting is on the desk straight away.",
+  "edges": [
+    {
+      "id": "e1",
+      "label": null,
+      "source": "pull",
+      "target": "end"
+    }
+  ],
+  "icon_url": null,
+  "mode": "GLOBAL",
+  "name": "outlook_calendar_changed",
+  "nodes": [
+    {
+      "config": {
+        "function_name": "sync_outlook",
+        "input_mapping": {
+          "batch_size": {
+            "type": "literal",
+            "value": 10
+          },
+          "future_days": {
+            "type": "literal",
+            "value": 14
+          },
+          "max_events": {
+            "type": "literal",
+            "value": 40
+          },
+          "past_days": {
+            "type": "literal",
+            "value": 2
+          },
+          "what": {
+            "type": "literal",
+            "value": "calendar"
+          }
+        }
+      },
+      "id": "pull",
+      "label": "Re-read the Outlook calendar",
+      "position": null,
+      "type": "FUNCTION"
+    },
+    {
+      "config": {},
+      "id": "end",
+      "label": "Done",
+      "position": null,
+      "type": "END"
+    }
+  ],
+  "start": {
+    "config": {
+      "connector_id": "outlook",
+      "connector_trigger_id": "outlook:composio:outlook_event_change_trigger",
+      "trigger_config": {}
+    },
+    "type": "EVENT"
+  },
+  "visibility": "POD"
+}

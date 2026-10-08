@@ -118,7 +118,7 @@ async function myConnectedAccount(installName: string, me: string): Promise<stri
     podId?: string; config?: { podId?: string }
     pods: { get: (id: string) => Promise<{ organization_id?: string }> }
     connectors: {
-      accounts: { list: (o: string) => Promise<{ items?: { id: string; auth_config_id: string; status: string; user_id?: string }[] }> }
+      accounts: { list: (o: string) => Promise<{ items?: { id: string; auth_config_id: string; connector_id?: string; status: string; user_id?: string; is_default?: boolean }[] }> }
       authConfigs: { list: (o: string, opts?: { limit: number }) => Promise<{ items?: { id: string; name: string }[] }> }
     }
   }
@@ -127,10 +127,15 @@ async function myConnectedAccount(installName: string, me: string): Promise<stri
   const org = (await c.pods.get(pod)).organization_id
   if (!org) return null
   const [cfgs, accts] = await Promise.all([c.connectors.authConfigs.list(org, { limit: 100 }), c.connectors.accounts.list(org)])
-  const cfg = (cfgs.items ?? []).find((x) => String(x.name).toLowerCase() === installName.toLowerCase())
-  if (!cfg) return null
-  const acct = (accts.items ?? []).find((a) => a.auth_config_id === cfg.id && a.status === 'CONNECTED' && (!a.user_id || a.user_id === me))
-  return acct?.id ?? null
+  // an install is found by its name, or by the connector it is for (one set up outside
+  // this app keeps whatever name it was given)
+  const want = installName.toLowerCase()
+  const cfgIds = new Set((cfgs.items ?? []).filter((x) => String(x.name).toLowerCase() === want).map((x) => x.id))
+  const mine = (accts.items ?? []).filter((a) => a.status === 'CONNECTED' && (!a.user_id || a.user_id === me)
+    && (cfgIds.has(a.auth_config_id) || String(a.connector_id ?? '').toLowerCase() === want))
+  // with several accounts of one kind, the watcher follows the default one; the others
+  // are still read by the nightly pass (a person gets one schedule per workflow)
+  return (mine.find((a) => a.is_default) ?? mine[0])?.id ?? null
 }
 
 /** Create my own schedule for a menu entry, switched on. */
@@ -138,10 +143,12 @@ export async function createMine(e: CatalogEntry, me: string): Promise<Sched> {
   const name = `${e.workflow_name}__${tagOf(me)}`
   if (e.schedule_type === 'WEBHOOK') {
     const account = e.needs ? await myConnectedAccount(e.needs, me) : null
-    if (!account) throw new Error(`connect ${e.needs === 'google_calendar' ? 'Google Calendar' : e.needs === 'gmail' ? 'Gmail' : e.needs} first`)
+    if (!account) throw new Error(`connect ${e.needs === 'google_calendar' ? 'Google Calendar' : e.needs === 'gmail' ? 'Gmail' : e.needs === 'outlook' ? 'Outlook' : e.needs} first`)
     return schedules().create({
       name, schedule_type: 'WEBHOOK', workflow_name: e.workflow_name,
-      config: { source: e.trigger_source }, connector_trigger_id: e.connector_trigger_id, account_id: account,
+      // which trigger it listens to comes from the workflow's own start; the platform
+      // refuses a schedule that names the trigger again
+      config: { source: e.trigger_source }, account_id: account,
     })
   }
   return schedules().create({
@@ -173,9 +180,9 @@ export async function setMine(e: CatalogEntry | null, existing: Sched | undefine
 }
 
 /** Make sure I have my own copy of every menu entry that starts on. Never re-enables one
- *  I switched off (that copy exists, paused), and only sets up TIME entries — the
- *  watchers need an account and are always a choice. Safe to call often: it runs once
- *  per visit, and concurrent callers share the same pass. */
+ *  I switched off (that copy exists, paused). A watcher that starts on (new mail) is set
+ *  up as soon as the account it watches is connected, and quietly skipped until then.
+ *  Safe to call often: it runs once per visit, and concurrent callers share the pass. */
 let pass: Promise<number> | null = null
 export function ensureMyAutopilots(): Promise<number> {
   if (pass) return pass
@@ -185,8 +192,9 @@ export function ensureMyAutopilots(): Promise<number> {
     const mine = all.filter((s) => s.user_id === me)
     let made = 0
     for (const e of menu) {
-      if (!e.default_on || e.schedule_type !== 'TIME' || e.needs) continue
-      if (myCopy(e, mine)) continue
+      if (!e.default_on || myCopy(e, mine)) continue
+      if (e.schedule_type === 'TIME' && e.needs) continue
+      // a watcher without its account throws here and is tried again on the next visit
       try { await createMine(e, me); made++ } catch { /* one refusal is not the whole set */ }
     }
     return made
