@@ -161,7 +161,7 @@ before.
 | **workflows** | One per autopilot; most wake Otto with one precise instruction. |
 | **schedules** | Only `autopilot_loose_ends`, the trigger the pod shares. Everyone's autopilots are created per person, from the menu. |
 | **files** | `/memory/AGENTS.md` — Otto — and `/setup/skills/`, the five skills, installed on first run. |
-| **apps** | `otto` — the desk, shipped built. Its project is `desk/`. |
+| **apps** | `otto` (the desk) and `yourotto` (a simpler layout) — two views of the same pod, shipped built. Their projects are `desk/` and `app/`. |
 
 ## Known limits
 

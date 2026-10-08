@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, ArrowRight } from 'lucide-react'
 import { runFn, sql } from '../lib'
 import { SourceMark } from '../brand'
-import { Orb } from '../ui'
 import { ensureMyAutopilots, ensureSkills, loadCatalog, type CatalogEntry } from '../autopilot-sync'
 import { quickStart, putSetting, unreadCount } from '../backfill'
 import { useTeammateFace, useRenameTeammate } from '../teammate'
@@ -291,7 +290,7 @@ export function FirstRun({ name, onDone }: { name: string; onDone: () => void })
 
         {step === 'working' && (
           <>
-            <div className="fr-face"><Orb live size={64} /></div>
+            <div className="fr-face"><img src={icon || "/favicon.svg"} alt="" width={72} height={72} /></div>
             <h1>Collecting your week.</h1>
             <p className="fr-sub">About a minute.</p>
             <div className="fr-track" role="progressbar" aria-valuemin={0} aria-valuemax={STAGES.length} aria-valuenow={stageAt + 1}>

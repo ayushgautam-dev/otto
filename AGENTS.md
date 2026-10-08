@@ -61,8 +61,8 @@ Lemma sign-in, and an agent has no session to get past it.
 
 ## The apps
 
-`apps/otto/source/` is **built output** —
-uploaded as-is on import, no npm, no variables. Change the project in `desk/`,
+`apps/otto/source/` and `apps/yourotto/source/` are **built output** —
+uploaded as-is on import, no npm, no variables. Change the project in `desk/` or `app/`,
 then run its `build.sh`. Shipping an edit without the rebuild changes nothing anybody
 can see.
 

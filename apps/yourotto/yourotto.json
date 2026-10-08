@@ -1,0 +1,6 @@
+{
+  "description": "Otto, the simpler layout.",
+  "name": "yourotto",
+  "public_slug": "${yourotto_slug}",
+  "visibility": "PUBLIC"
+}
