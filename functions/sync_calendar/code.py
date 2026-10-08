@@ -91,6 +91,7 @@ async def sync_calendar(ctx: FunctionContext, data: SyncCalendarInput) -> SyncCa
     mine = _my_addresses(pod, ctx)
     accounts = _my_accounts(pod, ctx, "google_calendar") or [{"id": "", "email": ""}]
     items: list[dict] = []
+    windows: list[dict] = []
     for acct in accounts:
         use = {"account_id": acct["id"]} if acct["id"] else {}
         try:
@@ -103,9 +104,14 @@ async def sync_calendar(ctx: FunctionContext, data: SyncCalendarInput) -> SyncCa
             continue
         r = resp.get("result", resp)
         body = r.get("data", r) if isinstance(r, dict) else {}
-        for ev in (body.get("items") or r.get("items") or []):
+        got = body.get("items") or r.get("items") or []
+        for ev in got:
             ev["_account"] = acct["id"]
             items.append(ev)
+        # a full read of the window (not cut short by the cap) says what is still there
+        if got and len(got) < data.max_events:
+            windows.append({"prefix": "gcal:", "start": tmin, "end": tmax, "account_id": acct["id"] or None,
+                            "keep": [f"gcal:{ev['id']}" for ev in got if ev.get("id") and ev.get("status") != "cancelled"]})
     res.fetched = len(items)
 
     interactions: list[dict] = []
@@ -170,5 +176,12 @@ async def sync_calendar(ctx: FunctionContext, data: SyncCalendarInput) -> SyncCa
         res.recorded += d.get("created", 0)
         res.skipped_duplicate += d.get("skipped_duplicate", 0)
         res.files_written += d.get("files_written", 0)
+
+    # meetings that were on a calendar and are gone from it stop showing as upcoming
+    for w in windows:
+        try:
+            pod.functions.run("record_interaction", {"interactions": [], "prune": w})
+        except Exception as exc:
+            res.errors.append(f"prune: {str(exc)[:120]}")
 
     return res

@@ -177,6 +177,10 @@ def _mail(pod: Pod, data: SyncOutlookInput, me: str, mine: set, acct: dict, res:
     return out
 
 
+# calendars read in full during this run, for the ledger to drop what has gone from them
+_PRUNE: list[dict] = []
+
+
 def _calendar(pod: Pod, data: SyncOutlookInput, me: str, mine: set, acct: dict, res: SyncOutlookResult) -> list[dict]:
     use = {"account_id": acct["id"]} if acct.get("id") else {}
     now = datetime.now(timezone.utc)
@@ -191,6 +195,15 @@ def _calendar(pod: Pod, data: SyncOutlookInput, me: str, mine: set, acct: dict, 
         return []
     items = body.get("value") or []
     res.fetched += len(items)
+    # a full read of the window says what is still on this calendar
+    if items and len(items) < data.max_events:
+        now_ = datetime.now(timezone.utc)
+        _PRUNE.append({
+            "prefix": "ocal:", "account_id": acct.get("id") or None,
+            "start": (now_ - timedelta(days=data.past_days)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "end": (now_ + timedelta(days=data.future_days)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "keep": [f"ocal:{ev['id']}" for ev in items if ev.get("id") and not ev.get("isCancelled")],
+        })
 
     out: list[dict] = []
     for ev in items:
@@ -296,6 +309,7 @@ async def sync_outlook(ctx: FunctionContext, data: SyncOutlookInput) -> SyncOutl
         accounts = [{"id": "", "email": ""}]      # the workspace default, as before
     res.accounts = len([a for a in accounts if a["id"]])
 
+    _PRUNE.clear()
     interactions: list[dict] = []
     for acct in accounts:
         use = {"account_id": acct["id"]} if acct["id"] else {}
@@ -308,4 +322,10 @@ async def sync_outlook(ctx: FunctionContext, data: SyncOutlookInput) -> SyncOutl
             interactions += _calendar(pod, data, me, mine, acct, res)
     res.shaped = len(interactions)
     _record(pod, interactions, res, data.batch_size)
+    for w in _PRUNE:
+        try:
+            pod.functions.run("record_interaction", {"interactions": [], "prune": w})
+        except Exception as exc:
+            res.errors.append(f"prune: {str(exc)[:120]}")
+    _PRUNE.clear()
     return res

@@ -41,13 +41,27 @@ class InteractionIn(BaseModel):
     participants: list[dict] = Field(default_factory=list)
 
 
+class PruneIn(BaseModel):
+    """Upcoming calendar rows that are no longer on the calendar. After a calendar is read
+    for a window, any stored future meeting from that calendar which was not in what came
+    back has been cancelled or deleted, and must stop showing as "next up"."""
+    prefix: str                       # which calendar's ids: "gcal:" or "ocal:"
+    start: str                        # the window that was just read, ISO
+    end: str
+    keep: list[str] = Field(default_factory=list)   # external ids still on the calendar
+    account_id: str | None = None
+
+
 class RecordInput(BaseModel):
     interactions: list[InteractionIn] = Field(default_factory=list)
+    prune: PruneIn | None = None
 
 
 class RecordResult(BaseModel):
     created: int = 0
     skipped_duplicate: int = 0
+    updated: int = 0          # meetings that moved or were renamed
+    removed: int = 0          # upcoming meetings no longer on the calendar
     files_written: int = 0
     unresolved_people: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
@@ -148,6 +162,11 @@ async def record_interaction(ctx: FunctionContext, data: RecordInput) -> RecordR
 
     seen = {r["external_id"] for r in rows(
         "select external_id from interactions where external_id is not null")}
+    # Meetings are the one kind of row that changes after it is written: they get moved
+    # and renamed. Keep what is stored for each so a change can be carried over.
+    meetings = {r["external_id"]: r for r in rows(
+        "select id, external_id, occurred_at, subject, account_id from interactions "
+        "where source = 'calendar' and external_id is not null")}
     person_by_email = {r["email"]: r["id"] for r in rows(
         "select id, email from people where email is not null")}
     company_by_domain = {r["domain"]: r["id"] for r in rows(
@@ -160,6 +179,21 @@ async def record_interaction(ctx: FunctionContext, data: RecordInput) -> RecordR
             res.errors.append("interaction without external_id skipped")
             continue
         if ext in seen:
+            was = meetings.get(ext)
+            if was:
+                # the same meeting, at a new time or under a new name: follow it
+                patch = {}
+                now_at = _iso(item.occurred_at)
+                if now_at and _iso(str(was.get("occurred_at") or "")) != now_at:
+                    patch["occurred_at"] = now_at
+                if item.subject and (was.get("subject") or "") != item.subject:
+                    patch["subject"] = item.subject
+                if patch:
+                    try:
+                        pod.records.update("interactions", was["id"], patch)
+                        res.updated += 1
+                    except Exception as exc:
+                        res.errors.append(f"could not update a moved meeting: {str(exc)[:120]}")
             res.skipped_duplicate += 1
             continue
         seen.add(ext)
@@ -216,5 +250,32 @@ async def record_interaction(ctx: FunctionContext, data: RecordInput) -> RecordR
     if batch:
         pod.records.bulk_create("interactions", batch)
         res.created = len(batch)
+
+    if data.prune and data.prune.keep:
+        pr = data.prune
+        keep = set(pr.keep)
+        now = datetime.now(timezone.utc)
+        try:
+            lo = max(now, datetime.fromisoformat(_iso(pr.start)))
+            hi = datetime.fromisoformat(_iso(pr.end))
+        except Exception:
+            lo = hi = now
+        for ext, was in meetings.items():
+            if not ext.startswith(pr.prefix) or ext in keep:
+                continue
+            # only this calendar's own rows (or rows from before accounts were recorded)
+            if pr.account_id and was.get("account_id") and was.get("account_id") != pr.account_id:
+                continue
+            try:
+                at = datetime.fromisoformat(_iso(str(was.get("occurred_at") or "")))
+            except Exception:
+                continue
+            # the past is history and stays; only what was still to come can be cancelled
+            if lo < at < hi:
+                try:
+                    pod.records.delete("interactions", was["id"])
+                    res.removed += 1
+                except Exception as exc:
+                    res.errors.append(f"could not remove a cancelled meeting: {str(exc)[:120]}")
 
     return res

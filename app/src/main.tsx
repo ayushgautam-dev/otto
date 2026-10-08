@@ -19,8 +19,8 @@ import { FirstRun, needsFirstRun } from './screens/firstrun'
 import { CloneGate } from './gate'
 import { ensureMyAutopilots, ensureSkills } from './autopilot-sync'
 import { useTeammate, useTeammateFace, DEFAULT_TEAMMATE } from './teammate'
-import { useCatchUp, CatchUpCtx, type CatchUp } from './backfill'
-import { useNewAccountCatchUp } from './accounts'
+import { useCatchUp, CatchUpCtx, type CatchUp, useFreshCalendar } from './backfill'
+import { useNewAccountCatchUp, useAccounts } from './accounts'
 import { Mailboxes } from './mailboxes'
 import './styles.css'
 
@@ -133,6 +133,8 @@ function Shell({ name, email }: { name: string; email: string }) {
   const catching = useCatchUp(bump)
   // a mailbox connected after first run loads its own three weeks
   useNewAccountCatchUp()
+  // a meeting made an hour ago is on today's timeline, not tomorrow's
+  useFreshCalendar(useAccounts().sources, bump)
 
   return (
     <div className="shell">

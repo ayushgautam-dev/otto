@@ -20,9 +20,9 @@ import { FirstRun, needsFirstRun } from './screens/firstrun'
 import { CloneGate } from './gate'
 import { Profile } from './profile'
 import { ensureMyAutopilots, ensureSkills } from './autopilot-sync'
-import { useCatchUp, CatchUpCtx, type CatchUp } from './backfill'
+import { useCatchUp, CatchUpCtx, type CatchUp, useFreshCalendar } from './backfill'
 import { useTeammate, useTeammateFace, tm, DEFAULT_TEAMMATE } from './teammate'
-import { useNewAccountCatchUp } from './accounts'
+import { useNewAccountCatchUp, useAccounts } from './accounts'
 import './styles.css'
 
 const queryClient = new QueryClient()
@@ -99,6 +99,8 @@ function Shell({ name, email }: { name: string; email: string }) {
   const catching = useCatchUp(bump)
   // a mailbox connected after first run loads its own three weeks
   useNewAccountCatchUp()
+  // a meeting made an hour ago is on today's timeline, not tomorrow's
+  useFreshCalendar(useAccounts().sources, bump)
   const lem = useLem()
   useRowKeys()
   let screen: React.ReactNode

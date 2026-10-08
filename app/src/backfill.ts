@@ -294,6 +294,39 @@ export function useCatchUp(onProgress: () => void): CatchUp | null {
   return state && !state.done ? state : null
 }
 
+/* Keep today's calendar honest while the app is open.
+   A meeting made an hour ago should be on the day's timeline when the person looks, not
+   tomorrow morning. A calendar watcher does this when it is on, but watchers can be off,
+   paused or simply late, so the app also re-reads the calendars itself: when it opens,
+   when the person comes back to the tab, and every so often in between. It is a small
+   read (yesterday to a week ahead), and at most once every few minutes. */
+const FRESH = 'desk-calendar-fresh'
+const FRESH_EVERY = 5 * 60_000
+
+export function useFreshCalendar(sources: string[], onChange: () => void) {
+  const key = sources.filter((s) => s === 'google_calendar' || s === 'outlook').sort().join(',')
+  useEffect(() => {
+    if (!key) return
+    let live = true
+    const run = async () => {
+      try {
+        if (Date.now() - Number(localStorage.getItem(FRESH) || 0) < FRESH_EVERY) return
+        localStorage.setItem(FRESH, String(Date.now()))
+      } catch { /* no storage: just read */ }
+      const jobs: Promise<unknown>[] = []
+      if (key.includes('google_calendar')) jobs.push(sync('sync_calendar', { past_days: 1, future_days: 7, max_events: 60, batch_size: 10 }))
+      if (key.includes('outlook')) jobs.push(sync('sync_outlook', { what: 'calendar', past_days: 1, future_days: 7, max_events: 60, batch_size: 10 }))
+      await Promise.allSettled(jobs)
+      if (live) onChange()
+    }
+    void run()
+    const timer = setInterval(() => { if (!document.hidden) void run() }, FRESH_EVERY)
+    const back = () => { if (!document.hidden) void run() }
+    document.addEventListener('visibilitychange', back)
+    return () => { live = false; clearInterval(timer); document.removeEventListener('visibilitychange', back) }
+  }, [key])
+}
+
 /** Whether history is still loading, for pages that would otherwise say "nothing here". */
 export const CatchUpCtx = createContext<CatchUp | null>(null)
 export const useCatching = () => useContext(CatchUpCtx)
