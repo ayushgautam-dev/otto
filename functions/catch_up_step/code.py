@@ -49,6 +49,8 @@ class StepResult(BaseModel):
     covered: int = 0
     unread: int = 0
     done: bool = False
+    # the first week has just been read: group it into topics before loading anything older
+    group: bool = False
 
 
 def _now() -> datetime:
@@ -140,6 +142,14 @@ async def catch_up_step(ctx: FunctionContext, data: StepInput) -> StepResult:
     else:
         state["stuck"] = 0
     state.pop("reading_until", None)
+
+    # Week one is read. Give the desk its shape (topics and their summaries) now, while
+    # the person is looking at it, and load the older weeks on the next step.
+    if not state.get("grouped"):
+        state["grouped"] = True
+        res.group, res.did = True, "first week read; grouping it into topics"
+        save()
+        return res
 
     hold(40)
     landed = 0

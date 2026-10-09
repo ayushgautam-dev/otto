@@ -5,36 +5,84 @@
       "id": "e0",
       "label": null,
       "source": "pull",
-      "target": "gate"
+      "target": "settle"
     },
     {
       "id": "e1",
+      "label": null,
+      "source": "settle",
+      "target": "gate"
+    },
+    {
+      "id": "e2",
       "label": null,
       "source": "gate",
       "target": "decide"
     },
     {
-      "id": "e2",
+      "id": "e3",
       "label": null,
       "source": "decide",
-      "target": "notice"
+      "target": "rules"
     },
     {
-      "id": "e3",
+      "id": "e4",
       "label": null,
       "source": "decide",
       "target": "end"
     },
     {
-      "id": "e4",
+      "id": "e5",
+      "label": null,
+      "source": "rules",
+      "target": "route"
+    },
+    {
+      "id": "e6",
+      "label": null,
+      "source": "route",
+      "target": "notice"
+    },
+    {
+      "id": "e7",
+      "label": null,
+      "source": "route",
+      "target": "sort"
+    },
+    {
+      "id": "e8",
+      "label": null,
+      "source": "sort",
+      "target": "notice"
+    },
+    {
+      "id": "e9",
       "label": null,
       "source": "notice",
       "target": "released"
     },
     {
-      "id": "e5",
+      "id": "e10",
       "label": null,
       "source": "released",
+      "target": "after"
+    },
+    {
+      "id": "e11",
+      "label": null,
+      "source": "after",
+      "target": "end"
+    },
+    {
+      "id": "e12",
+      "label": null,
+      "source": "after",
+      "target": "drafts"
+    },
+    {
+      "id": "e13",
+      "label": null,
+      "source": "drafts",
       "target": "end"
     }
   ],
@@ -48,15 +96,27 @@
         "input_mapping": {
           "batch_size": {
             "type": "literal",
-            "value": 5
+            "value": 10
           },
           "days": {
             "type": "literal",
             "value": 1
           },
+          "future_days": {
+            "type": "literal",
+            "value": 14
+          },
+          "max_events": {
+            "type": "literal",
+            "value": 40
+          },
           "max_messages": {
             "type": "literal",
             "value": 10
+          },
+          "past_days": {
+            "type": "literal",
+            "value": 2
           },
           "what": {
             "type": "literal",
@@ -65,7 +125,23 @@
         }
       },
       "id": "pull",
-      "label": "Pull the latest Outlook mail into the ledger",
+      "label": "Pull the latest from Outlook into the ledger",
+      "position": null,
+      "type": "FUNCTION"
+    },
+    {
+      "config": {
+        "function_name": "autoresolve_loops",
+        "input_mapping": {
+          "thread_refs": {
+            "optional": false,
+            "type": "expression",
+            "value": "pull.threads"
+          }
+        }
+      },
+      "id": "settle",
+      "label": "Close what this mail settles",
       "position": null,
       "type": "FUNCTION"
     },
@@ -75,7 +151,7 @@
         "input_mapping": {}
       },
       "id": "gate",
-      "label": "Anything to read, and nobody reading?",
+      "label": "Anything to read, and a reader free?",
       "position": null,
       "type": "FUNCTION"
     },
@@ -95,6 +171,50 @@
     },
     {
       "config": {
+        "function_name": "triage",
+        "input_mapping": {
+          "mode": {
+            "type": "literal",
+            "value": "rules"
+          }
+        }
+      },
+      "id": "rules",
+      "label": "Sort what needs no judgement",
+      "position": null,
+      "type": "FUNCTION"
+    },
+    {
+      "config": {
+        "rules": [
+          {
+            "condition": "rules.sort",
+            "next_node_id": "sort"
+          }
+        ]
+      },
+      "id": "route",
+      "label": "Anything for a model to sort?",
+      "position": null,
+      "type": "DECISION"
+    },
+    {
+      "config": {
+        "agent_name": "pod_default",
+        "input_mapping": {
+          "message": {
+            "type": "literal",
+            "value": "Sort new mail into two piles, Read or Noise. That is all you do in this run: do not write commitments, people or anything else, do not open mail bodies beyond the opening lines you are given, and do not inspect functions, tables or files.\n\n1. Get what is waiting: `lemma functions run triage --data '{\"mode\":\"list\"}' --output json`. Each entry is one conversation from somebody the person has never written to and has not answered: `thread`, `sender`, `subject`, `opening`.\n2. Decide each one.\n   NOISE: a newsletter, product update, notification, receipt, automated alert, event promotion, or a cold pitch \u2014 a stranger selling a product or service, an agency offering candidates, design, SEO or development work, or an unsolicited investment or partnership template.\n   READ: a real person asking this person for something or answering something; a customer, candidate, investor, partner or supplier writing for the first time about real business; anything about money owed, a contract, a deadline, legal or the security of their own accounts. A first message from a stranger that asks a specific question about the person's own product or work is READ, not a pitch.\n   If you are not sure, it is READ. Wrongly reading costs a minute; wrongly discarding hides something from them.\n3. Save every verdict in ONE call: write verdicts.json as {\"mode\":\"apply\",\"verdicts\":[{\"thread\":\"<thread>\",\"noise\":true,\"reason\":\"cold pitch for SEO services\"},{\"thread\":\"<thread>\",\"noise\":false}]} and run `lemma functions run triage --data @verdicts.json --output json`. Give each NOISE a reason of a few plain words.\n4. Reply with the two counts only."
+          }
+        }
+      },
+      "id": "sort",
+      "label": "Sort the rest into Read or Noise",
+      "position": null,
+      "type": "AGENT"
+    },
+    {
+      "config": {
         "agent_name": "pod_default",
         "input_mapping": {
           "message": {
@@ -104,7 +224,7 @@
         }
       },
       "id": "notice",
-      "label": "Read what is new",
+      "label": "Read what is worth reading",
       "position": null,
       "type": "AGENT"
     },
@@ -115,6 +235,11 @@
           "done": {
             "type": "literal",
             "value": true
+          },
+          "slot": {
+            "optional": false,
+            "type": "expression",
+            "value": "gate.slot"
           }
         }
       },
@@ -122,6 +247,35 @@
       "label": "Reading finished",
       "position": null,
       "type": "FUNCTION"
+    },
+    {
+      "config": {
+        "rules": [
+          {
+            "condition": "released.draft",
+            "next_node_id": "drafts"
+          }
+        ]
+      },
+      "id": "after",
+      "label": "Anything newly owed?",
+      "position": null,
+      "type": "DECISION"
+    },
+    {
+      "config": {
+        "agent_name": "pod_default",
+        "input_mapping": {
+          "message": {
+            "type": "literal",
+            "value": "Load the otto-write skill and follow it exactly \u2014 including reading /me/voice.md and settings voice_doc before writing anything.\n\nFind every open commitment on the person's own side (`loops.side='you'`, `status='open'`) that has no pending row in `drafts`, and prepare it. Newest first, stop after eight.\n\nFor each, decide the shape the skill describes:\n- email \u2014 the answer is something said. Fill kind='email', subject, body, to_emails, cc_emails.\n- meeting \u2014 a call was agreed or would settle it. Call find_free_slots and fill kind='meeting' with a `meeting` JSON of 2\u20134 real slots, plus a short covering body.\n- document \u2014 what was promised is a thing (offer letter, JD, proposal, LOI, specs). Write the complete document into `deliverables` (kind='doc', status='pending', loop_id) and an email draft (kind='email') that sends it.\n\nAlways set `note` to one past-tense line saying what you prepared. One pending draft per commitment \u2014 update rather than adding a second. Never send anything. Never invent a fact; mark a genuine unknown with [...] and say so in the note. Report how many you prepared of each shape."
+          }
+        }
+      },
+      "id": "drafts",
+      "label": "Write what is owed",
+      "position": null,
+      "type": "AGENT"
     },
     {
       "config": {},

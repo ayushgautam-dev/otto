@@ -39,6 +39,10 @@ RESOLVE_ON_THEIR_REPLY = {"awaiting_reply", "scheduling_stalled"}
 class AutoResolveInput(BaseModel):
     dry_run: bool = False
     max_loops: int = 200
+    # Only these conversations. A watcher that has just brought mail in passes the
+    # threads it touched, so a reply settles its item within the minute without every
+    # open item being checked against the mailbox each time. Empty means all of them.
+    thread_refs: list[str] | None = None
 
 
 class Closed(BaseModel):
@@ -112,6 +116,10 @@ async def autoresolve_loops(ctx: FunctionContext, data: AutoResolveInput) -> Aut
     my_email = (ctx.user_email or "").lower()
     res = AutoResolveResult()
 
+    wanted = [t for t in (data.thread_refs or []) if t][:60]
+    only = (" and l.thread_ref in (" + ",".join("'" + t.replace("'", "''") + "'" for t in wanted) + ")") if wanted else ""
+    if data.thread_refs is not None and not wanted:
+        return res          # asked about specific threads and none were touched
     loops = pod.query(
         "select l.id, l.kind, l.side, l.obligation, l.thread_ref, l.opened_at, "
         "coalesce(p.name,'') as person, "
@@ -119,7 +127,7 @@ async def autoresolve_loops(ctx: FunctionContext, data: AutoResolveInput) -> Aut
         "(select i.account_id from interactions i where i.thread_ref = l.thread_ref "
         " and i.account_id is not null limit 1) as account_id "
         "from loops l left join people p on p.id=l.person_id "
-        f"where l.status='open' and coalesce(l.thread_ref,'')<>'' limit {data.max_loops}"
+        f"where l.status='open' and coalesce(l.thread_ref,'')<>''{only} limit {data.max_loops}"
     ).to_dict()["items"]
 
     outlook_me: dict[str, str] = {}

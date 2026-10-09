@@ -21,7 +21,7 @@ import { setCatchUpSchedule } from './autopilot-sync'
 
 export const WINDOW_DAYS = 21
 const SLICE_DAYS = 4
-const SLICE_MAX = 40
+const SLICE_MAX = 60
 
 export interface CatchUp {
   /** how many days back have been loaded */
@@ -112,6 +112,13 @@ async function settle(name: string, budgetMs: number): Promise<boolean> {
   return false
 }
 
+/** One more reader. Reading runs several at once: each reader is handed different people's
+ *  mail, and the pod's gate turns away any beyond the number it allows, so asking for
+ *  another is always safe. */
+export async function startReader(): Promise<void> {
+  await wf().runs.create('autopilot_loose_ends')
+}
+
 /** Run a workflow (or join the run already going) and wait for it, but never let a slow
  *  run hold the door shut. Returns whether it finished inside the budget. */
 export async function runWorkflow(name: string, budgetMs = 90_000): Promise<boolean> {
@@ -165,15 +172,17 @@ export async function quickStart(sources: string[], say: (phase: string) => void
   const attempt = async (label: string, fn: () => Promise<unknown>) => {
     try { await fn() } catch (e) { trouble.push(`${label}: ${(e as Error)?.message ?? 'did not finish'}`) }
   }
-  let covered = 2
+  // One week first: enough for a desk that is true today, small enough to be read in
+  // minutes. The two weeks before it follow in the background (the catch-up).
+  const covered = 7
   await holdTrigger(60)
 
   if (on('gmail')) {
     say('mail')
     await attempt('Mail', async () => {
-      const first = await mailSlice(0, 2)
-      // a quiet weekend is not an empty inbox: reach back until there is something to read
-      if (first.seen < 15) { await mailSlice(0, 5); covered = 5 }
+      // in two pulls, so neither one outlives the request limit on a busy inbox
+      await mailSlice(0, 3)
+      await mailSlice(3, 7)
     })
   }
   if (on('google_calendar')) {
@@ -186,8 +195,7 @@ export async function quickStart(sources: string[], say: (phase: string) => void
     // Microsoft 365: mail and calendar come through the one connection
     say('mail')
     await attempt('Mail', async () => {
-      const first = await sync('sync_outlook', { what: 'mail', days: 2, max_messages: SLICE_MAX, batch_size: 10 })
-      if (first.seen < 15) { await sync('sync_outlook', { what: 'mail', days: 5, max_messages: SLICE_MAX, batch_size: 10 }); covered = Math.max(covered, 5) }
+      await sync('sync_outlook', { what: 'mail', days: 7, max_messages: 80, batch_size: 10 })
     })
     say('calendar')
     await attempt('Calendar', () =>
@@ -229,7 +237,8 @@ export async function readCatchUp(): Promise<CatchUp | null> {
   if (!row) return null
   try {
     const s = JSON.parse(row.value) as CatchUp
-    s.grouped = !!(await getSetting('catchup_grouped'))?.value
+    // the pod groups the first week itself; the app's own flag is the older fallback
+    s.grouped = !!s.grouped || !!(await getSetting('catchup_grouped'))?.value
     return s
   } catch { return null }
 }
@@ -251,6 +260,8 @@ export function useCatchUp(onProgress: () => void): CatchUp | null {
     void (async () => {
       let last = ''
       let nudged = Date.now()
+      const startedAt = Date.now()
+      let readerAsked = Date.now()
       // long enough for three weeks of slow reading; the pod carries on regardless
       for (let i = 0; live && i < 720; i++) {
         const s = await readCatchUp()
@@ -264,7 +275,13 @@ export function useCatchUp(onProgress: () => void): CatchUp | null {
         if (!someoneElseIsOnIt()) {
           beat()
           const unread = await unreadCount()
-          if (!s.grouped && unread === 0) {
+          // while there is mail waiting, keep the readers topped up: one starts with the
+          // catch-up itself, and these join it a little later so they do not all sort at once
+          if (unread > 0 && Date.now() - readerAsked > 45_000) {
+            readerAsked = Date.now()
+            await startReader().catch(() => null)
+          }
+          if (!s.grouped && unread === 0 && Date.now() - startedAt > 180_000) {
             // what was just read, grouped, so the desk has shape before older mail arrives
             await putSetting('catchup_grouped', '1')
             await runWorkflow('autopilot_situations', 180_000).catch(() => null)

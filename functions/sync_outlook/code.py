@@ -46,6 +46,7 @@ class SyncOutlookResult(BaseModel):
     files_written: int = 0
     errors: list[str] = []
     accounts: int = 0
+    threads: list[str] = []            # conversations this run touched
 
 
 _TAG = re.compile(r"<[^>]+>")
@@ -322,6 +323,7 @@ async def sync_outlook(ctx: FunctionContext, data: SyncOutlookInput) -> SyncOutl
         if what in ("calendar", "both"):
             interactions += _calendar(pod, data, me, mine, acct, res)
     res.shaped = len(interactions)
+    res.threads = sorted({i["thread_ref"] for i in interactions if i.get("thread_ref")})[:60]
     _record(pod, interactions, res, data.batch_size)
     for w in _PRUNE:
         try:

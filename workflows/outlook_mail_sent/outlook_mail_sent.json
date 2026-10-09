@@ -1,98 +1,86 @@
 {
-  "description": "The safety net. Webhooks drop events occasionally, so once a night this re-reads the recent window for mail and calendar. Everything dedupes on external_id, so a repeat costs nothing.",
+  "description": "An Outlook message you send fires this. It pulls the sent mail in, closes whatever that reply settles, and reads it for anything you promised.",
   "edges": [
     {
       "id": "e0",
       "label": null,
-      "source": "mail",
-      "target": "cal"
-    },
-    {
-      "id": "e1",
-      "label": null,
-      "source": "cal",
-      "target": "outlook"
-    },
-    {
-      "id": "e2",
-      "label": null,
-      "source": "outlook",
+      "source": "pull",
       "target": "settle"
     },
     {
-      "id": "e3",
+      "id": "e1",
       "label": null,
       "source": "settle",
       "target": "gate"
     },
     {
-      "id": "e4",
+      "id": "e2",
       "label": null,
       "source": "gate",
       "target": "decide"
     },
     {
-      "id": "e5",
+      "id": "e3",
       "label": null,
       "source": "decide",
       "target": "rules"
     },
     {
-      "id": "e6",
+      "id": "e4",
       "label": null,
       "source": "decide",
       "target": "end"
     },
     {
-      "id": "e7",
+      "id": "e5",
       "label": null,
       "source": "rules",
       "target": "route"
     },
     {
-      "id": "e8",
+      "id": "e6",
       "label": null,
       "source": "route",
       "target": "notice"
     },
     {
-      "id": "e9",
+      "id": "e7",
       "label": null,
       "source": "route",
       "target": "sort"
     },
     {
-      "id": "e10",
+      "id": "e8",
       "label": null,
       "source": "sort",
       "target": "notice"
     },
     {
-      "id": "e11",
+      "id": "e9",
       "label": null,
       "source": "notice",
       "target": "released"
     },
     {
-      "id": "e12",
+      "id": "e10",
       "label": null,
       "source": "released",
       "target": "after"
     },
     {
-      "id": "e13",
+      "id": "e11",
       "label": null,
       "source": "after",
       "target": "end"
     },
     {
-      "id": "e14",
+      "id": "e12",
       "label": null,
       "source": "after",
       "target": "drafts"
     },
     {
-      "id": "e15",
+      "id": "e13",
       "label": null,
       "source": "drafts",
       "target": "end"
@@ -100,54 +88,8 @@
   ],
   "icon_url": null,
   "mode": "GLOBAL",
-  "name": "nightly_catchup",
+  "name": "outlook_mail_sent",
   "nodes": [
-    {
-      "config": {
-        "function_name": "sync_gmail",
-        "input_mapping": {
-          "batch_size": {
-            "type": "literal",
-            "value": 10
-          },
-          "days": {
-            "type": "literal",
-            "value": 3
-          },
-          "max_messages": {
-            "type": "literal",
-            "value": 60
-          }
-        }
-      },
-      "id": "mail",
-      "label": "Catch up on mail",
-      "position": null,
-      "type": "FUNCTION"
-    },
-    {
-      "config": {
-        "function_name": "sync_calendar",
-        "input_mapping": {
-          "batch_size": {
-            "type": "literal",
-            "value": 10
-          },
-          "future_days": {
-            "type": "literal",
-            "value": 7
-          },
-          "past_days": {
-            "type": "literal",
-            "value": 7
-          }
-        }
-      },
-      "id": "cal",
-      "label": "Catch up on calendar",
-      "position": null,
-      "type": "FUNCTION"
-    },
     {
       "config": {
         "function_name": "sync_outlook",
@@ -158,38 +100,48 @@
           },
           "days": {
             "type": "literal",
-            "value": 3
+            "value": 1
           },
           "future_days": {
             "type": "literal",
-            "value": 7
+            "value": 14
+          },
+          "max_events": {
+            "type": "literal",
+            "value": 40
           },
           "max_messages": {
             "type": "literal",
-            "value": 60
+            "value": 10
           },
           "past_days": {
             "type": "literal",
-            "value": 7
+            "value": 2
           },
           "what": {
             "type": "literal",
-            "value": "both"
+            "value": "mail"
           }
         }
       },
-      "id": "outlook",
-      "label": "Outlook mail and calendar",
+      "id": "pull",
+      "label": "Pull the latest from Outlook into the ledger",
       "position": null,
       "type": "FUNCTION"
     },
     {
       "config": {
         "function_name": "autoresolve_loops",
-        "input_mapping": {}
+        "input_mapping": {
+          "thread_refs": {
+            "optional": false,
+            "type": "expression",
+            "value": "pull.threads"
+          }
+        }
       },
       "id": "settle",
-      "label": "Close what was settled",
+      "label": "Close what this mail settles",
       "position": null,
       "type": "FUNCTION"
     },
@@ -335,9 +287,11 @@
   ],
   "start": {
     "config": {
-      "schedule_type": "CRON"
+      "connector_id": "outlook",
+      "connector_trigger_id": "outlook:composio:outlook_sent_message_trigger",
+      "trigger_config": {}
     },
-    "type": "SCHEDULED"
+    "type": "EVENT"
   },
   "visibility": "POD"
 }

@@ -404,7 +404,7 @@ person waits on an empty screen. Read a batch, write it, mark it, and only then 
 next one, so results appear as you go.
 
 ```
-lemma functions run pending_interactions --data '{"limit": 20}' --output json
+lemma functions run pending_interactions --data '{"limit": 10}' --output json > batch.json
 lemma functions run ingest_open_loops    --data @batch.json     --output json
 lemma functions run mark_extracted       --data @marked.json    --output json
 ```
@@ -446,11 +446,25 @@ or message, whatever the source. You never talk to Gmail, Granola, Meet or Slack
 yourself. A row from a call and a row from an inbox reach you the same way, so treat
 them the same way and let `source` and `kind` tell you what you are looking at.
 
-1. **Call `pending_interactions`** with `{"limit": 20}`. You get back rows nobody has
-   read yet: `id`, `kind`, `source`, `occurred_at`, `subject`, `direction`
-   (`inbound` = to you, `outbound` = from you), `addressed_to_me`, `thread_ref`,
-   `person_email` (the counterparty) and the **full `body`**. `remaining` tells you how
-   much is still waiting.
+1. **Call `pending_interactions` ONCE per batch**, saving what it returns to a file
+   (`… --output json > batch.json`) and working from that file. Never call it a second
+   time to look again: every call hands you NEW rows and holds them for you, so a second
+   call strands the first batch where no other reader can reach it. Use `{"limit": 10}`. You get back mail that has already
+   been sorted as worth reading, and that is now yours alone: other readers run beside
+   you, and nobody else will be handed these rows for the next few minutes. Each row has
+   `id`, `kind`, `source`, `occurred_at`, `subject`, `direction` (`inbound` = to you,
+   `outbound` = from you), `addressed_to_me`, `thread_ref`, `person_email` (the
+   counterparty) and the **full `body`**. `remaining` tells you how much is still waiting.
+
+   **Read a conversation whole.** Rows come grouped by `thread_ref`, oldest first, and you
+   are given every waiting message from the same people. `earlier` lists what was said
+   before in those same conversations (one line each, from messages already read). Read
+   the thread as one thing from top to bottom before deciding anything: the last message
+   usually changes what the first one meant. One conversation produces at most the
+   obligations that are open at its END, not one per message.
+
+   Write and mark each batch before taking the next (steps 8 and 9), so what you find
+   reaches the person's desk straight away and your hold on the rows is released.
 
 2. **Before you write anything, read `already_open`.** It lists the loops that are
    already outstanding with these same people. **The same obligation must never become a

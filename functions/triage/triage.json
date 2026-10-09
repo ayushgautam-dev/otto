@@ -3,9 +3,9 @@
     "$file": "code.py"
   },
   "config": null,
-  "description": "Returns interactions no extractor has read yet, with their body text loaded from the file store, plus the loops already open with those same people so the agent can avoid writing a duplicate.",
+  "description": "Sorts new mail, a whole conversation at a time, into Read or Noise before the careful reading pass. Fixed rules settle what needs no judgement; the rest is handed back for a model to judge, and its verdicts are recorded here. Noise is filed with its reason, never deleted; anything undecided is read.",
   "icon_url": null,
-  "name": "pending_interactions",
+  "name": "triage",
   "permissions": {
     "grants": [
       {
@@ -14,14 +14,6 @@
           "datastore.table.read"
         ],
         "resource_name": "people",
-        "resource_type": "datastore_table"
-      },
-      {
-        "permission_ids": [
-          "datastore.record.read",
-          "datastore.table.read"
-        ],
-        "resource_name": "loops",
         "resource_type": "datastore_table"
       },
       {

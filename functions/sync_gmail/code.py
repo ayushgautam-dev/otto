@@ -37,6 +37,7 @@ class SyncGmailResult(BaseModel):
     files_written: int = 0
     errors: list[str] = []
     accounts: int = 0                        # how many of my Gmail accounts were read
+    threads: list[str] = []                  # conversations this run touched
 
 
 def _addr(raw: str) -> tuple[str, str]:
@@ -241,6 +242,7 @@ async def sync_gmail(ctx: FunctionContext, data: SyncGmailInput) -> SyncGmailRes
         })
 
     res.shaped = len(interactions)
+    res.threads = sorted({i["thread_ref"] for i in interactions if i.get("thread_ref")})[:60]
     # Chunked: each interaction carries a full body and triggers a file write, so a
     # whole 30-day backfill in one call times out. Batches keep each call small and
     # let a partial failure keep the work already done.

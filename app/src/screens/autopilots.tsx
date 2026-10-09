@@ -76,6 +76,8 @@ const LABELS: Record<string, Meta> = {
   },
   mail_arrived: { name: 'Watch Gmail', what: 'Picks up new Gmail the moment it lands.', icon: Mail, tint: 'grey' },
   calendar_changed: { name: 'Watch Google Calendar', what: 'Notices when something on your calendar changes.', icon: CalendarClock, tint: 'grey' },
+  mail_sent: { name: 'Notice Gmail you send', what: 'Closes an item the moment you reply, and catches anything you promised.', icon: Mail, tint: 'grey' },
+  outlook_mail_sent: { name: 'Notice Outlook mail you send', what: 'Closes an item the moment you reply, and catches anything you promised.', icon: Mail, tint: 'grey' },
   outlook_mail_arrived: { name: 'Watch Outlook mail', what: 'Picks up new Outlook mail the moment it lands.', icon: Mail, tint: 'grey' },
   outlook_calendar_changed: { name: 'Watch Outlook calendar', what: 'Notices when something on your Outlook calendar changes.', icon: CalendarClock, tint: 'grey' },
   nightly_catchup: { name: 'Nightly catch-up', what: 'Re-reads the last few days in case a webhook was missed.', icon: MoonStar, tint: 'grey' },

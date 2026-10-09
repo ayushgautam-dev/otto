@@ -338,6 +338,38 @@
       "type": "TEXT",
       "type_params": null,
       "unique": false
+    },
+    {
+      "auto": false,
+      "computed": false,
+      "default": null,
+      "description": null,
+      "expression": null,
+      "foreign_key": null,
+      "max_length": null,
+      "name": "triage",
+      "options": null,
+      "required": false,
+      "system": false,
+      "type": "TEXT",
+      "type_params": null,
+      "unique": false
+    },
+    {
+      "auto": false,
+      "computed": false,
+      "default": null,
+      "description": null,
+      "expression": null,
+      "foreign_key": null,
+      "max_length": null,
+      "name": "claimed_until",
+      "options": null,
+      "required": false,
+      "system": false,
+      "type": "DATETIME",
+      "type_params": null,
+      "unique": false
     }
   ],
   "config": {},

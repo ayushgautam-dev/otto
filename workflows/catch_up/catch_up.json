@@ -5,30 +5,102 @@
       "id": "e0",
       "label": null,
       "source": "step",
-      "target": "gate"
+      "target": "more"
     },
     {
       "id": "e1",
       "label": null,
-      "source": "gate",
-      "target": "notice"
+      "source": "more",
+      "target": "gate"
     },
     {
       "id": "e2",
       "label": null,
-      "source": "gate",
-      "target": "end"
+      "source": "more",
+      "target": "topics"
     },
     {
       "id": "e3",
+      "label": null,
+      "source": "more",
+      "target": "end"
+    },
+    {
+      "id": "e4",
+      "label": null,
+      "source": "topics",
+      "target": "end"
+    },
+    {
+      "id": "e5",
+      "label": null,
+      "source": "gate",
+      "target": "decide"
+    },
+    {
+      "id": "e6",
+      "label": null,
+      "source": "decide",
+      "target": "rules"
+    },
+    {
+      "id": "e7",
+      "label": null,
+      "source": "decide",
+      "target": "end"
+    },
+    {
+      "id": "e8",
+      "label": null,
+      "source": "rules",
+      "target": "route"
+    },
+    {
+      "id": "e9",
+      "label": null,
+      "source": "route",
+      "target": "notice"
+    },
+    {
+      "id": "e10",
+      "label": null,
+      "source": "route",
+      "target": "sort"
+    },
+    {
+      "id": "e11",
+      "label": null,
+      "source": "sort",
+      "target": "notice"
+    },
+    {
+      "id": "e12",
       "label": null,
       "source": "notice",
       "target": "released"
     },
     {
-      "id": "e_rel",
+      "id": "e13",
       "label": null,
       "source": "released",
+      "target": "after"
+    },
+    {
+      "id": "e14",
+      "label": null,
+      "source": "after",
+      "target": "end"
+    },
+    {
+      "id": "e15",
+      "label": null,
+      "source": "after",
+      "target": "drafts"
+    },
+    {
+      "id": "e16",
+      "label": null,
+      "source": "drafts",
       "target": "end"
     }
   ],
@@ -50,13 +122,75 @@
       "config": {
         "rules": [
           {
+            "condition": "step.group",
+            "next_node_id": "topics"
+          },
+          {
             "condition": "step.skip",
             "next_node_id": "end"
           }
         ]
       },
+      "id": "more",
+      "label": "Group, read, or nothing?",
+      "position": null,
+      "type": "DECISION"
+    },
+    {
+      "config": {
+        "function_name": "reader_gate",
+        "input_mapping": {
+          "ignore_import": {
+            "type": "literal",
+            "value": true
+          }
+        }
+      },
       "id": "gate",
-      "label": "Anything to read?",
+      "label": "Anything to read, and a reader free?",
+      "position": null,
+      "type": "FUNCTION"
+    },
+    {
+      "config": {
+        "rules": [
+          {
+            "condition": "gate.skip",
+            "next_node_id": "end"
+          }
+        ]
+      },
+      "id": "decide",
+      "label": "Read now?",
+      "position": null,
+      "type": "DECISION"
+    },
+    {
+      "config": {
+        "function_name": "triage",
+        "input_mapping": {
+          "mode": {
+            "type": "literal",
+            "value": "rules"
+          }
+        }
+      },
+      "id": "rules",
+      "label": "Sort what needs no judgement",
+      "position": null,
+      "type": "FUNCTION"
+    },
+    {
+      "config": {
+        "rules": [
+          {
+            "condition": "rules.sort",
+            "next_node_id": "sort"
+          }
+        ]
+      },
+      "id": "route",
+      "label": "Anything for a model to sort?",
       "position": null,
       "type": "DECISION"
     },
@@ -66,12 +200,27 @@
         "input_mapping": {
           "message": {
             "type": "literal",
-            "value": "Load the otto-notice skill and follow it exactly. Read the unread rows in the interaction ledger and turn them into commitments, people, companies, timeline entries and board cards. Only open commitments from the last three weeks. Filter cold outbound aggressively. Never open a commitment you were only copied on. Check what is already open before writing anything so the same obligation never becomes a second row. Write through ingest_open_loops and mark everything you read with mark_extracted, including the noise. Do not send anything. Report totals only. Start reading straight away: do not inspect functions, tables or files first. When pending_interactions returns no rows, stop at once."
+            "value": "Sort new mail into two piles, Read or Noise. That is all you do in this run: do not write commitments, people or anything else, do not open mail bodies beyond the opening lines you are given, and do not inspect functions, tables or files.\n\n1. Get what is waiting: `lemma functions run triage --data '{\"mode\":\"list\"}' --output json`. Each entry is one conversation from somebody the person has never written to and has not answered: `thread`, `sender`, `subject`, `opening`.\n2. Decide each one.\n   NOISE: a newsletter, product update, notification, receipt, automated alert, event promotion, or a cold pitch \u2014 a stranger selling a product or service, an agency offering candidates, design, SEO or development work, or an unsolicited investment or partnership template.\n   READ: a real person asking this person for something or answering something; a customer, candidate, investor, partner or supplier writing for the first time about real business; anything about money owed, a contract, a deadline, legal or the security of their own accounts. A first message from a stranger that asks a specific question about the person's own product or work is READ, not a pitch.\n   If you are not sure, it is READ. Wrongly reading costs a minute; wrongly discarding hides something from them.\n3. Save every verdict in ONE call: write verdicts.json as {\"mode\":\"apply\",\"verdicts\":[{\"thread\":\"<thread>\",\"noise\":true,\"reason\":\"cold pitch for SEO services\"},{\"thread\":\"<thread>\",\"noise\":false}]} and run `lemma functions run triage --data @verdicts.json --output json`. Give each NOISE a reason of a few plain words.\n4. Reply with the two counts only."
+          }
+        }
+      },
+      "id": "sort",
+      "label": "Sort the rest into Read or Noise",
+      "position": null,
+      "type": "AGENT"
+    },
+    {
+      "config": {
+        "agent_name": "pod_default",
+        "input_mapping": {
+          "message": {
+            "type": "literal",
+            "value": "Load the otto-notice skill and follow it exactly. Read the unread rows in the interaction ledger and turn them into commitments, people, companies, timeline entries and board cards. Only open commitments from the last three weeks. Filter cold outbound aggressively. Never open a commitment you were only copied on. Check what is already open before writing anything so the same obligation never becomes a second row. Write through ingest_open_loops and mark everything you read with mark_extracted, including the noise. Do not send anything. Report totals only. Start reading straight away: do not inspect functions, tables or files first. When pending_interactions returns no rows, stop at once and do nothing else."
           }
         }
       },
       "id": "notice",
-      "label": "Read what was loaded",
+      "label": "Read what is worth reading",
       "position": null,
       "type": "AGENT"
     },
@@ -82,6 +231,11 @@
           "done": {
             "type": "literal",
             "value": true
+          },
+          "slot": {
+            "optional": false,
+            "type": "expression",
+            "value": "gate.slot"
           }
         }
       },
@@ -89,6 +243,50 @@
       "label": "Reading finished",
       "position": null,
       "type": "FUNCTION"
+    },
+    {
+      "config": {
+        "rules": [
+          {
+            "condition": "released.draft",
+            "next_node_id": "drafts"
+          }
+        ]
+      },
+      "id": "after",
+      "label": "Anything newly owed?",
+      "position": null,
+      "type": "DECISION"
+    },
+    {
+      "config": {
+        "agent_name": "pod_default",
+        "input_mapping": {
+          "message": {
+            "type": "literal",
+            "value": "Load the otto-write skill and follow it exactly \u2014 including reading /me/voice.md and settings voice_doc before writing anything.\n\nFind every open commitment on the person's own side (`loops.side='you'`, `status='open'`) that has no pending row in `drafts`, and prepare it. Newest first, stop after eight.\n\nFor each, decide the shape the skill describes:\n- email \u2014 the answer is something said. Fill kind='email', subject, body, to_emails, cc_emails.\n- meeting \u2014 a call was agreed or would settle it. Call find_free_slots and fill kind='meeting' with a `meeting` JSON of 2\u20134 real slots, plus a short covering body.\n- document \u2014 what was promised is a thing (offer letter, JD, proposal, LOI, specs). Write the complete document into `deliverables` (kind='doc', status='pending', loop_id) and an email draft (kind='email') that sends it.\n\nAlways set `note` to one past-tense line saying what you prepared. One pending draft per commitment \u2014 update rather than adding a second. Never send anything. Never invent a fact; mark a genuine unknown with [...] and say so in the note. Report how many you prepared of each shape."
+          }
+        }
+      },
+      "id": "drafts",
+      "label": "Write what is owed",
+      "position": null,
+      "type": "AGENT"
+    },
+    {
+      "config": {
+        "agent_name": "pod_default",
+        "input_mapping": {
+          "message": {
+            "type": "literal",
+            "value": "Refresh the Feed's topics and the person's workstreams. Follow your writing rules in /memory/AGENTS.md exactly.\n\nFIRST \u2014 the person's notes. Read `corrections` where applied is not true. Each is the person telling you something you could not see (\"already made the WhatsApp group\", \"discussed on a call, not needed\", \"that summary is wrong\"). Act on each one now: reword or close the commitment it concerns (closed_by='manual', close_reason quoting their words, when they say it is done or not needed), fix the summary or workstream it is about, then set applied=true.\n\nTOPICS (`situations` table)\n1. Read every open row in `loops`, with its person, company and work_project.\n2. Group them. A commitment that belongs to a workstream joins that workstream's topic (anchor='workstream', set work_project_id). Otherwise group by what it is about \u2014 usually one per person (anchor='person', set person_id). Several people on the same thing (one hiring round, one customer) belong in ONE topic.\n3. `title`: the topic in the person's own words \u2014 'Acme', 'Founding designer hire' \u2014 never a category.\n4. `summary`: AT MOST TWO SENTENCES AND 220 CHARACTERS. Lead with what needs the person now, with the real date, amount or name; then the one thing they are waiting on, if any. Read timeline_events and the commitments' provenance so every word is true. Never use: loop, entity, record, evidence, thread, status, pending, action item, reply owed, awaiting reply, workstream, situation.\n5. `urgency` = the most urgent of its commitments; status='active'; last_seen_at=now. Update the existing row for an anchor rather than creating a second. Mark a topic whose commitments are all closed status='resolved'.\n\nWORKSTREAMS (`work_projects` table) \u2014 keep them true, and create the missing ones\n6. kind='account': any company with money or a signature in motion (an invoice, a contract, an LOI or pilot, a paid PoC) or with two or more real two-way conversations in the last three weeks and something still open. A paying customer ALWAYS has one. title = the company name; set company_id, kind='account', the sales track_id, cadence ('Customer', 'Pilot', 'Negotiating'), attendees (their emails). Never create one for a vendor pitching the person, a recruiter, or a cold sender.\n7. kind='meeting' for a recurring calendar series (derive cadence from actual dates, never the title, never from one occurrence); kind='hiring' for a hiring round; kind='project' for a finite delivery with a deadline. Never create two for the same thing \u2014 '[Imp] Daily Catchup' and 'Daily Catchup' are one.\n8. For every workstream: `stands` = at most two sentences / 240 characters of where it stands and what was promised; link each open commitment that belongs to it by setting loops.work_project_id. Archive (archived=true) a workstream with no activity for six weeks and nothing open.\n\nBOARDS (`tracks`, `stages`, `board_cards`) \u2014 keep every pipeline true to how this person actually works\n8a. Nobody starts with a board; one is created the first time a real pipeline exists. Run `select relationship, count(*) from people group by relationship` and `select slug, name from tracks`. For each kind of pipeline where THREE OR MORE people or companies are in the same process with the person right now (prospects being sold to, candidates for a role, investors being raised from, or anything else they run in steps) and no tracker covers it: create one with `lemma functions run create_tracker --data '{\"name\": \"\u2026\", \"subject\": \"person|company\", \"stages\": [{\"name\": \"\u2026\", \"definition\": \"\u2026\"}, \u2026, {\"name\": \"\u2026\", \"definition\": \"\u2026\", \"is_terminal\": true}]}'`, naming it and its three to six stages after how THIS person runs it as their mail shows, with one positive and one negative ending. Then put every one of those people or companies on it with `place_on_boards` (cards: track_slug, subject_type, person_email or company_domain, stage_name, reason). Fewer than three: no board. Never create one because a topic merely sounds like sales or hiring.\n9. For each track with cards, read the stage names and compare them with what the mail and meeting notes show this person really does. If the real process has a named step the board lacks (an assignment, a call with the founder, an LOI, a pilot), rename a generic stage to it or add it in order; if a stage has never been used and nothing in the mail suggests it, leave it \u2014 never delete a stage that holds cards. Keep exactly one positive and one negative ending. Keep each stage's `definition` true to its name: one plain sentence saying what evidence puts someone there (an ending needs a plain statement in a message \u2014 never \"set by a human\"). A stage renamed without its definition updated is wrong.\n10. Place each card by evidence, using the stage names as they are now: an invite with no reply stays at the first stage; \"I'll send the assignment\" is the assignment step; the person saying \"I'll send the offer letter\" is the offer step. Terminal stages need explicit evidence. Write `last_move_reason` as one short plain sentence with the date.\n11. One card per deal: a company that is the end client, paying entity or parent of a deal already on the board does not get its own card \u2014 note it in that card's reason instead.\n\nWrite with `lemma records create/update`. Report in one line: topics written/resolved, workstreams created/updated, boards changed."
+          }
+        }
+      },
+      "id": "topics",
+      "label": "Group the first week into topics",
+      "position": null,
+      "type": "AGENT"
     },
     {
       "config": {},
