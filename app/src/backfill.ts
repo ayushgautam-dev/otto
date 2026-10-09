@@ -202,6 +202,16 @@ export async function quickStart(sources: string[], say: (phase: string) => void
       sync('sync_outlook', { what: 'calendar', past_days: covered, future_days: 14, max_events: 60, batch_size: 10 }))
   }
 
+  if (on('granola')) {
+    // Meeting notes are where most promises are made, so the week's notes belong in the
+    // first pass, not with the older weeks. Granola only offers whole calendar weeks, and
+    // "this week" on a Monday is nearly empty, so last week comes along too.
+    await attempt('Meeting notes', async () => {
+      await sync('sync_granola', { time_range: 'this_week', batch_size: 10 })
+      await sync('sync_granola', { time_range: 'last_week', batch_size: 10 })
+    })
+  }
+
   const unread = await unreadCount()
   const state: CatchUp = { covered, target: WINDOW_DAYS, sources, extras: false, done: false, unread }
   await putSetting('catchup', JSON.stringify(state))
