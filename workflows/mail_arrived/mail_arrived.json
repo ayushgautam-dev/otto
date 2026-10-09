@@ -2,9 +2,39 @@
   "description": "A new Gmail message fires this. It pulls that one message into the interaction ledger. Nothing here judges the mail \u2014 landing the row is enough, because the row insert then triggers the extractor.",
   "edges": [
     {
-      "id": "e1",
+      "id": "e0",
       "label": null,
       "source": "pull",
+      "target": "gate"
+    },
+    {
+      "id": "e1",
+      "label": null,
+      "source": "gate",
+      "target": "decide"
+    },
+    {
+      "id": "e2",
+      "label": null,
+      "source": "decide",
+      "target": "notice"
+    },
+    {
+      "id": "e3",
+      "label": null,
+      "source": "decide",
+      "target": "end"
+    },
+    {
+      "id": "e4",
+      "label": null,
+      "source": "notice",
+      "target": "released"
+    },
+    {
+      "id": "e5",
+      "label": null,
+      "source": "released",
       "target": "end"
     }
   ],
@@ -32,6 +62,60 @@
       },
       "id": "pull",
       "label": "Pull the message into the ledger",
+      "position": null,
+      "type": "FUNCTION"
+    },
+    {
+      "config": {
+        "function_name": "reader_gate",
+        "input_mapping": {}
+      },
+      "id": "gate",
+      "label": "Anything to read, and nobody reading?",
+      "position": null,
+      "type": "FUNCTION"
+    },
+    {
+      "config": {
+        "rules": [
+          {
+            "condition": "gate.skip",
+            "next_node_id": "end"
+          }
+        ]
+      },
+      "id": "decide",
+      "label": "Read now?",
+      "position": null,
+      "type": "DECISION"
+    },
+    {
+      "config": {
+        "agent_name": "pod_default",
+        "input_mapping": {
+          "message": {
+            "type": "literal",
+            "value": "Load the otto-notice skill and follow it exactly. Read the unread rows in the interaction ledger and turn them into commitments, people, companies, timeline entries and board cards. Only open commitments from the last three weeks. Filter cold outbound aggressively. Never open a commitment you were only copied on. Check what is already open before writing anything so the same obligation never becomes a second row. Write through ingest_open_loops and mark everything you read with mark_extracted, including the noise. Do not send anything. Report totals only. Start reading straight away: do not inspect functions, tables or files first. When pending_interactions returns no rows, stop at once and do nothing else."
+          }
+        }
+      },
+      "id": "notice",
+      "label": "Read what is new",
+      "position": null,
+      "type": "AGENT"
+    },
+    {
+      "config": {
+        "function_name": "reader_gate",
+        "input_mapping": {
+          "done": {
+            "type": "literal",
+            "value": true
+          }
+        }
+      },
+      "id": "released",
+      "label": "Reading finished",
       "position": null,
       "type": "FUNCTION"
     },

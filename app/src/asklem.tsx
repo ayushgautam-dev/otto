@@ -10,9 +10,9 @@ import { tm } from './teammate'
    earlier conversation is one click away in the title menu. */
 
 type Ask = (seed: string, scope?: Partial<ChatScope>) => void
-interface Panel { ask: Ask; open: (scope?: Partial<ChatScope>) => void; close: () => void; isOpen: boolean }
+interface Panel { ask: Ask; write: Ask; open: (scope?: Partial<ChatScope>) => void; close: () => void; isOpen: boolean }
 
-const Ctx = createContext<Panel>({ ask: () => {}, open: () => {}, close: () => {}, isOpen: false })
+const Ctx = createContext<Panel>({ ask: () => {}, write: () => {}, open: () => {}, close: () => {}, isOpen: false })
 export const useAskLem = () => useContext(Ctx).ask
 export const useLemPanel = () => useContext(Ctx)
 
@@ -126,6 +126,12 @@ export function AskLemProvider({ children }: { children: ReactNode }) {
     const s = { ...HOME, ...(scope ?? {}) }
     openSheet({ type: 'lem', key: s.key, title: s.title, about: s.about, seed })
   }, [openSheet])
+  /** Send this without bringing the chat forward: the result shows where it was asked
+   *  for (a draft appearing under the item), not as a conversation to read. */
+  const write = useCallback<Ask>((seed, scope) => {
+    const s = { ...HOME, ...(scope ?? {}) }
+    openSheet({ type: 'lem', key: s.key, title: s.title, about: s.about, seed }, true)
+  }, [openSheet])
   const open = useCallback((scope?: Partial<ChatScope>) => {
     const existing = tabs.find((t) => t.type === 'lem')
     if (existing && !scope) { openSheet(existing); return }
@@ -148,7 +154,7 @@ export function AskLemProvider({ children }: { children: ReactNode }) {
   }, [isOpen, open, close])
 
   return (
-    <Ctx.Provider value={{ ask, open, close, isOpen }}>
+    <Ctx.Provider value={{ ask, write, open, close, isOpen }}>
       {children}
     </Ctx.Provider>
   )

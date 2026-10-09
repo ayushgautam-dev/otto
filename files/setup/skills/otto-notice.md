@@ -519,6 +519,16 @@ them the same way and let `source` and `kind` tell you what you are looking at.
    who they are, how the relationship stands, what is outstanding. Only the people in
    this batch — a full re-summarisation is the nightly pass, not yours.
 
+12. **Keep the topic on the desk true.** The person reads the topic card, not the ledger. If
+   what you just read changes where a topic stands (a reply came, somebody new was
+   brought in, a date moved, something was delivered), rewrite that row in `situations`
+   now: `summary` in at most two sentences and 220 characters, leading with what needs
+   the person, and bump `last_seen_at`. Example: a reply that adds their head of legal
+   to review the agreement turns "Waiting on Priya to sign" into "Priya has passed the
+   agreement to her head of legal; nothing needed from you yet." Do not wait for the
+   twice-daily refresh: a card that still shows yesterday's state after today's reply is
+   the product looking broken. Touch only the topics this batch changed.
+
 ## Rules
 
 - Precision over volume. Better 12 real loops than 40 noisy ones.

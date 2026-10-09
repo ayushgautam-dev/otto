@@ -74,8 +74,10 @@ const LABELS: Record<string, Meta> = {
     what: 'Re-reads your sent mail once a month so every draft keeps sounding like you.',
     icon: PenLine, tint: 'violet',
   },
-  mail_arrived: { name: 'Watch mail', what: 'Picks up new mail the moment it lands.', icon: Mail, tint: 'grey' },
-  calendar_changed: { name: 'Watch calendar', what: 'Notices when something on your calendar changes.', icon: CalendarClock, tint: 'grey' },
+  mail_arrived: { name: 'Watch Gmail', what: 'Picks up new Gmail the moment it lands.', icon: Mail, tint: 'grey' },
+  calendar_changed: { name: 'Watch Google Calendar', what: 'Notices when something on your calendar changes.', icon: CalendarClock, tint: 'grey' },
+  outlook_mail_arrived: { name: 'Watch Outlook mail', what: 'Picks up new Outlook mail the moment it lands.', icon: Mail, tint: 'grey' },
+  outlook_calendar_changed: { name: 'Watch Outlook calendar', what: 'Notices when something on your Outlook calendar changes.', icon: CalendarClock, tint: 'grey' },
   nightly_catchup: { name: 'Nightly catch-up', what: 'Re-reads the last few days in case a webhook was missed.', icon: MoonStar, tint: 'grey' },
   slack_poll: { name: 'Check Slack', what: 'Reads the channels it was invited to, twice a day.', icon: MessageSquare, tint: 'grey' },
 }
@@ -146,7 +148,12 @@ function keyOf(s: Sched): string {
 
 function metaOf(s: Sched): Meta {
   const k = keyOf(s)
-  return LABELS[k] ?? { name: k || 'Autopilot', what: '', icon: Zap, tint: 'grey' }
+  if (LABELS[k]) return LABELS[k]
+  // anything newer than this list still has a proper name on the menu; and a routine
+  // somebody made themselves is shown by its name in words, never as an identifier
+  const e = (s as { entry?: { name?: string; what?: string | null } | null }).entry
+  const words = (k || 'Autopilot').replace(/^autopilot_/, '').replace(/_/g, ' ')
+  return { name: e?.name || words.charAt(0).toUpperCase() + words.slice(1), what: e?.what || '', icon: Zap, tint: 'grey' }
 }
 
 function Row({ s, onToggle }: { s: Sched; onToggle: (s: Sched) => void }) {
@@ -196,7 +203,7 @@ export function Autopilots() {
         }
       })
       const covered = new Set(fromMenu.map((r) => r.copy?.id).filter(Boolean))
-      const own: Sched[] = mine.filter((s) => !covered.has(s.id)).map((s) => ({ ...s, entry: null, copy: s }))
+      const own: Sched[] = mine.filter((s) => !covered.has(s.id) && s.workflow_name !== 'catch_up' && s.schedule_type !== 'DATASTORE').map((s) => ({ ...s, entry: null, copy: s }))
       setRows([...fromMenu, ...own])
     } catch { setRows([]) }
   }

@@ -23,6 +23,12 @@
       "id": "e3",
       "label": null,
       "source": "notice",
+      "target": "released"
+    },
+    {
+      "id": "e_rel",
+      "label": null,
+      "source": "released",
       "target": "end"
     }
   ],
@@ -68,6 +74,21 @@
       "label": "Read what was loaded",
       "position": null,
       "type": "AGENT"
+    },
+    {
+      "config": {
+        "function_name": "reader_gate",
+        "input_mapping": {
+          "done": {
+            "type": "literal",
+            "value": true
+          }
+        }
+      },
+      "id": "released",
+      "label": "Reading finished",
+      "position": null,
+      "type": "FUNCTION"
     },
     {
       "config": {},

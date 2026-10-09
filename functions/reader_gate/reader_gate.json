@@ -1,0 +1,32 @@
+{
+  "code": {
+    "$file": "code.py"
+  },
+  "config": null,
+  "description": "Decides whether a reading pass should start after something was written to the ledger: only when there is unread mail, no import is running and no other pass holds the lease. Replaces the old one-run-per-row trigger, which collapsed under any burst of mail.",
+  "icon_url": null,
+  "name": "reader_gate",
+  "permissions": {
+    "grants": [
+      {
+        "permission_ids": [
+          "datastore.record.read",
+          "datastore.record.write",
+          "datastore.table.read"
+        ],
+        "resource_name": "settings",
+        "resource_type": "datastore_table"
+      },
+      {
+        "permission_ids": [
+          "datastore.record.read",
+          "datastore.table.read"
+        ],
+        "resource_name": "interactions",
+        "resource_type": "datastore_table"
+      }
+    ]
+  },
+  "type": "API",
+  "visibility": "POD"
+}

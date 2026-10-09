@@ -60,6 +60,7 @@ class RecordInput(BaseModel):
 class RecordResult(BaseModel):
     created: int = 0
     skipped_duplicate: int = 0
+    prefiltered: int = 0      # bulk mail filed as read without a reading pass
     updated: int = 0          # meetings that moved or were renamed
     removed: int = 0          # upcoming meetings no longer on the calendar
     files_written: int = 0
@@ -153,6 +154,24 @@ def _folder(person_email: str) -> str:
     return f"{CORPUS_ROOT}/{_slug(person_email, 80)}" if person_email else UNFILED
 
 
+# Bulk mail that needs nobody: sent by a machine AND carrying a mailing-list footer. Both
+# must hold. A "no-reply" address alone is not enough (a signature request or an invoice
+# comes from one and does need the person), and neither is a footer alone. Rows that pass
+# this test are filed as already read, so the slow, careful reading is spent on real mail.
+_MACHINE = re.compile(
+    r"^(no[-_.]?reply|noreply|do[-_.]?not[-_.]?reply|donotreply|notifications?|newsletters?|news|updates?|"
+    r"digest|marketing|mailer[-_.]?daemon|bounces?|hello|team|info|community|events?)([+.\-_][^@]*)?@", re.I)
+_LIST_FOOTER = re.compile(
+    r"unsubscribe|manage (your )?(email )?preferences|email preferences|view (this email )?in (your )?browser|"
+    r"you are receiving this (email|message) because|update your preferences|opt[- ]out", re.I)
+
+
+def _bulk_mail(item: "InteractionIn", email: str) -> bool:
+    if (item.kind or "").lower() != "email" or (item.direction or "").lower() != "inbound":
+        return False
+    return bool(_MACHINE.search(email or "")) and bool(_LIST_FOOTER.search(item.body or ""))
+
+
 async def record_interaction(ctx: FunctionContext, data: RecordInput) -> RecordResult:
     pod = Pod.from_env()
     res = RecordResult()
@@ -244,6 +263,12 @@ async def record_interaction(ctx: FunctionContext, data: RecordInput) -> RecordR
                 res.files_written += 1
             except Exception as exc:                      # a lost body must not lose the row
                 res.errors.append(f"file write failed for {ext[:40]}: {exc}")
+
+        if _bulk_mail(item, email):
+            row["extracted_at"] = datetime.now(timezone.utc).isoformat()
+            row["extractor_version"] = "prefilter"
+            row["summary"] = "Automated bulk mail, filed without reading"
+            res.prefiltered += 1
 
         batch.append(row)
 

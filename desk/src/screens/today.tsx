@@ -416,6 +416,37 @@ function ByCompany({ rows, myDomain, onChange, toPeople }: {
   )
 }
 
+/* The first minutes. The desk is open but nothing has been found yet, and a blank page
+   with a spinner in the corner reads as broken. So show the work: how much was collected,
+   how much of it has been read so far, and what has turned up, counted live. */
+function Reading({ teammate }: { teammate: string }) {
+  const [tick, setTick] = useState(0)
+  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 5000); return () => clearInterval(t) }, [])
+  const q = useSql<{ total: number; unread: number; people: number; loops: number }>(rev(
+    `select (select count(*) from interactions) as total,
+            (select count(*) from interactions where extracted_at is null) as unread,
+            (select count(*) from people) as people,
+            (select count(*) from loops where status='open') as loops`, tick))
+  const c = q.items[0]
+  const total = Number(c?.total ?? 0), unread = Number(c?.unread ?? 0)
+  const read = Math.max(0, total - unread)
+  const pct = total ? Math.round((read / total) * 100) : 0
+  return (
+    <div className="reading" role="status">
+      <Orb live size={44} />
+      <div className="display sm">{teammate} is reading your mail.</div>
+      <p className="lede">The first loose ends usually appear within five minutes. You can leave this open or come back.</p>
+      <div className="reading-bar" aria-label={`${pct}% read`}><i style={{ width: `${Math.max(pct, total ? 4 : 0)}%` }} /></div>
+      <div className="reading-nums">
+        <div><b>{total}</b><span>collected</span></div>
+        <div><b>{read}</b><span>read so far</span></div>
+        <div><b>{Number(c?.people ?? 0)}</b><span>people found</span></div>
+        <div><b>{Number(c?.loops ?? 0)}</b><span>loose ends</span></div>
+      </div>
+    </div>
+  )
+}
+
 export function Today({ userName }: { userName: string }) {
   const { version, bump } = useNav()
   const catching = useCatching()
@@ -510,10 +541,12 @@ export function Today({ userName }: { userName: string }) {
 
       {loading ? <Loading rows={4} />
         : all.length === 0 ? (
-          <div className="clear">
-            <div className="display sm">{catching ? `${teammate} is reading your mail.` : 'Nothing needs you.'}</div>
-            <p className="lede">{catching ? 'Loose ends appear here as they are found.' : `${teammate} will put things here as they come in.`}</p>
-          </div>
+          catching ? <Reading teammate={teammate} /> : (
+            <div className="clear">
+              <div className="display sm">Nothing needs you.</div>
+              <p className="lede">{teammate} will put things here as they come in.</p>
+            </div>
+          )
         ) : (
           <>
             {group === 'person' ? (

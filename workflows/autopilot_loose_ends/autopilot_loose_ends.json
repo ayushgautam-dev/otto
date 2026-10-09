@@ -4,25 +4,31 @@
     {
       "id": "e0",
       "label": null,
-      "source": "guard",
-      "target": "gate"
+      "source": "gate",
+      "target": "decide"
     },
     {
       "id": "e1",
       "label": null,
-      "source": "gate",
+      "source": "decide",
       "target": "notice"
     },
     {
       "id": "e2",
       "label": null,
-      "source": "gate",
+      "source": "decide",
       "target": "end"
     },
     {
       "id": "e3",
       "label": null,
       "source": "notice",
+      "target": "released"
+    },
+    {
+      "id": "e4",
+      "label": null,
+      "source": "released",
       "target": "end"
     }
   ],
@@ -32,11 +38,16 @@
   "nodes": [
     {
       "config": {
-        "function_name": "backfill_guard",
-        "input_mapping": {}
+        "function_name": "reader_gate",
+        "input_mapping": {
+          "ignore_import": {
+            "type": "literal",
+            "value": true
+          }
+        }
       },
-      "id": "guard",
-      "label": "Mid-import?",
+      "id": "gate",
+      "label": "Anything to read, and nobody reading?",
       "position": null,
       "type": "FUNCTION"
     },
@@ -44,13 +55,13 @@
       "config": {
         "rules": [
           {
-            "condition": "start.payload.id && guard.skip",
+            "condition": "gate.skip",
             "next_node_id": "end"
           }
         ]
       },
-      "id": "gate",
-      "label": "Stand down during a first-run import",
+      "id": "decide",
+      "label": "Read now?",
       "position": null,
       "type": "DECISION"
     },
@@ -68,6 +79,21 @@
       "label": "Read what is new",
       "position": null,
       "type": "AGENT"
+    },
+    {
+      "config": {
+        "function_name": "reader_gate",
+        "input_mapping": {
+          "done": {
+            "type": "literal",
+            "value": true
+          }
+        }
+      },
+      "id": "released",
+      "label": "Reading finished",
+      "position": null,
+      "type": "FUNCTION"
     },
     {
       "config": {},

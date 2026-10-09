@@ -23,7 +23,7 @@ class SendBriefInput(BaseModel):
     # Send even when one already went out today. Off by default so a retry or a second
     # schedule firing cannot produce two emails.
     force: bool = False
-    subject_prefix: str = "Open Loops"
+    subject_prefix: str = "Your brief"
 
 
 class SendBriefResult(BaseModel):

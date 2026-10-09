@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { X, ExternalLink, MessageCircle, Maximize2, Minimize2, Paperclip, ChevronRight } from 'lucide-react'
 import {
   useSql, rev, lit, ageLabel, fmtDate, runFn, records,
@@ -7,7 +7,7 @@ import {
 import { Avatar, Markdown, Empty, Loading, useToast } from './ui'
 import { useNav, tabKey, type SheetTarget } from './nav'
 import { ItemList } from './items'
-import { LemPane, useAskLem } from './asklem'
+import { LemPane, useAskLem, useLemPanel } from './asklem'
 import { CloseControls } from './closing'
 import {
   DraftCard, DocCard, LemNote, draftForLoop, useDocsForLoop, type DraftRow,
@@ -179,12 +179,31 @@ function LoopPane({ tab }: { tab: Extract<SheetTarget, { type: 'loop' }> }) {
       bump()
     } finally { setMaking(false) }
   }
-  useEffect(() => { if (tab.nudge && l && !draft && !dq.isLoading) void startNudge() }, [tab.nudge, l?.id, dq.isLoading])
+  /* Asking for a draft does not bring the chat forward. This pane says it is being
+     written and the draft appears here when ready; it re-reads every few seconds and
+     stops once what is there has changed (or after a few minutes). */
+  const panel = useLemPanel()
+  const sig = `${draft?.id ?? ''}:${(draft?.body ?? '').length}:${docs.items.length}`
+  const [writing, setWriting] = useState<{ from: string; since: number } | null>(null)
+  useEffect(() => {
+    if (!writing) return
+    if (sig !== writing.from || Date.now() - writing.since > 4 * 60_000) { setWriting(null); return }
+    const t = setTimeout(bump, 4000)
+    return () => clearTimeout(t)
+  }, [writing, sig, version])
+  const autoNudged = useRef(false)
+  useEffect(() => {
+    if (!tab.nudge || !l || dq.isLoading || autoNudged.current) return
+    autoNudged.current = true
+    // a nudge opened from the Feed is written straight away, in place
+    void (async () => { if (!draft) await startNudge(); quietWrite() })()
+  }, [tab.nudge, l?.id, dq.isLoading])
 
   if (q.isLoading && !l) return <div className="pane-body"><Loading /></div>
   if (!l) return <div className="pane-body"><Empty line="This item is gone." /></div>
 
-  const lemWrite = () => askLem(
+  const quietWrite = () => { if (!l) return; setWriting({ from: sig, since: Date.now() }); lemWrite() }
+  const lemWrite = () => panel.write(
     l.side === 'them'
       ? `Write a short nudge to ${l.person} about "${l.obligation}" (commitment ${l.id}) in my voice, as a reply on the same conversation. Put it in the pending draft for that commitment if there is one. End with the card marker.`
       : `Prepare "${l.obligation}" for me (commitment ${l.id}). Use the otto-write skill and pick the right shape. End with the card marker.`,
@@ -204,10 +223,10 @@ function LoopPane({ tab }: { tab: Extract<SheetTarget, { type: 'loop' }> }) {
 
       <CloseControls loop={l} onClosed={() => { bump(); closeTab(tabKey(tab)) }}>
         {l.side === 'them' && !draft && (
-          <button className="btn primary" disabled={making} onClick={() => void startNudge()}>Nudge {first}</button>
+          <button className="btn primary" disabled={making || !!writing} onClick={() => void (async () => { await startNudge(); quietWrite() })()}>Nudge {first}</button>
         )}
         {l.side === 'you' && !draft && !docs.items.length && (
-          <button className="btn primary" onClick={lemWrite}>Prepare it</button>
+          <button className="btn primary" disabled={!!writing} onClick={quietWrite}>Prepare it</button>
         )}
       </CloseControls>
 
@@ -219,13 +238,19 @@ function LoopPane({ tab }: { tab: Extract<SheetTarget, { type: 'loop' }> }) {
             {l.provenance || (l.thread_ref?.startsWith('granola:') ? 'From your meeting notes.' : 'No email conversation for this one.')}
           </div>}
 
+      {writing && (
+        <div className="writing" role="status">
+          <span className="spinner sm" />
+          <div><b>{tm()} is writing it…</b><span>It will appear here. You can carry on.</span></div>
+        </div>
+      )}
       {(draft || docs.items.length > 0) && (
         <div className="prepared" style={{ marginTop: 16 }}>
           {draft && <LemNote text={draft.note} />}
           {draft && <DraftCard draft={draft} docs={docs.items} onSent={() => closeTab(tabKey(tab))} />}
           {draft && (
             <div className="acts" style={{ marginTop: -2, marginBottom: 12 }}>
-              <button className="btn quiet" onClick={lemWrite}>
+              <button className="btn quiet" disabled={!!writing} onClick={quietWrite}>
                 <MessageCircle size={13} /> {l.side === 'them' ? `Let ${tm()} write it` : `Redo with ${tm()}`}
               </button>
             </div>

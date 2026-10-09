@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { X, Maximize2, Minimize2, MessageCircle, Sparkles, Mail, NotebookPen, CalendarDays, Layers, FileText } from 'lucide-react'
 import {
   useSql, rev, lit, ageLabel, fmtDate, records, isGmailThread,
@@ -91,12 +91,31 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
       bump()
     } finally { setMaking(false) }
   }
-  useEffect(() => { if (f.nudge && l && !draft && !dq.isLoading) void startNudge() }, [f.nudge, l?.id, dq.isLoading])
+  /* Asking for a draft does not open the chat. The item's own pane says it is being
+     written, and the draft appears here when it is ready; the chat is for when somebody
+     chooses to talk. While waiting, the pane re-reads the draft every few seconds and
+     stops as soon as what is there has changed (or after a few minutes, in case it never does). */
+  const sig = `${draft?.id ?? ''}:${(draft?.body ?? '').length}:${docs.items.length}`
+  const [writing, setWriting] = useState<{ from: string; since: number } | null>(null)
+  useEffect(() => {
+    if (!writing) return
+    if (sig !== writing.from || Date.now() - writing.since > 4 * 60_000) { setWriting(null); return }
+    const t = setTimeout(bump, 4000)
+    return () => clearTimeout(t)
+  }, [writing, sig, version])
+  const autoNudged = useRef(false)
+  useEffect(() => {
+    if (!f.nudge || !l || dq.isLoading || autoNudged.current) return
+    autoNudged.current = true
+    // a nudge opened from the desk is written straight away, in place
+    void (async () => { if (!draft) await startNudge(); quietWrite() })()
+  }, [f.nudge, l?.id, dq.isLoading])
 
   if (q.isLoading && !l) return <div className="focus-body"><Loading /></div>
   if (!l) return <div className="focus-body"><Empty line="This item is gone." /></div>
 
-  const lemWrite = () => lem.ask(
+  const quietWrite = () => { if (!l) return; setWriting({ from: sig, since: Date.now() }); lemWrite() }
+  const lemWrite = () => lem.write(
     l.side === 'them'
       ? `Write a short nudge to ${l.person} about "${l.obligation}" (commitment ${l.id}) in my voice, as a reply on the same conversation. Put it in the pending draft for that commitment if there is one. End with the card marker.`
       : `Prepare "${l.obligation}" for me (commitment ${l.id}). Use the otto-write skill and pick the right shape. End with the card marker.`,
@@ -129,7 +148,13 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
           ? <Conversation threadRef={l.thread_ref!} />
           : <p className="prov">{l.provenance || (l.thread_ref?.startsWith('granola:') ? 'From your meeting notes.' : 'No email conversation for this one.')}</p>}
 
-        {hasWork ? (
+        {writing && (
+          <div className="writing" role="status">
+            <Orb live size={20} />
+            <div><b>{tm()} is writing it…</b><span>It will appear here. You can carry on.</span></div>
+          </div>
+        )}
+        {writing && !hasWork ? null : hasWork ? (
           <div className="prepared">
             <div className="prepared-h"><Orb size={14} /> {tm()} prepared</div>
             {draft && <LemNote text={draft.note} />}
@@ -144,8 +169,8 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
               <span>{l.side === 'you' ? `${tm()} can write it in your voice. You still press send.` : 'A short follow-up on the same conversation.'}</span>
             </div>
             {l.side === 'you'
-              ? <button className="btn spark" onClick={lemWrite}><Sparkles size={13} /> Prepare it</button>
-              : <button className="btn spark" disabled={making} onClick={() => void startNudge()}>Nudge {first}</button>}
+              ? <button className="btn spark" onClick={quietWrite}><Sparkles size={13} /> Prepare it</button>
+              : <button className="btn spark" disabled={making} onClick={() => void (async () => { await startNudge(); quietWrite() })()}>Nudge {first}</button>}
           </div>
         )}
       </div>
@@ -154,7 +179,7 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
         <CloseBar loop={l} onClosed={leave} lead={
           <>
             {hasWork && (
-              <button className="btn ghost sm" onClick={lemWrite}>
+              <button className="btn ghost sm" disabled={!!writing} onClick={quietWrite}>
                 <Sparkles size={13} /> {l.side === 'them' && draft ? `Let ${tm()} write it` : `Redo with ${tm()}`}
               </button>
             )}

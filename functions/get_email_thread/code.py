@@ -53,8 +53,25 @@ _QUOTE = re.compile(
 )
 
 
+_HTMLISH = re.compile(r"</?(p|br|div|span|table|tr|td|html|body|a|b|strong|em|ul|ol|li|h[1-6]|blockquote|font)\b[^>]*>", re.I)
+
+
+def _plain(text: str) -> str:
+    """Some senders' mail arrives as HTML even in the "text" field. Show it as words:
+    paragraphs and line breaks become new lines, every other tag goes, entities are decoded."""
+    t = text or ""
+    if not _HTMLISH.search(t):
+        return t
+    import html as _html
+    t = re.sub(r"(?is)<(style|script|head)[^>]*>.*?</\1>", " ", t)
+    t = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</tr>|</li>|</h[1-6]>|</blockquote>", "\n", t)
+    t = _html.unescape(re.sub(r"<[^>]+>", "", t))
+    t = re.sub(r"[ \t\r\f\v]+", " ", t)
+    return re.sub(r"\n\s*\n\s*\n+", "\n\n", t).strip()
+
+
 def _strip(text: str) -> str:
-    t = (text or "").replace("\r\n", "\n")
+    t = _plain(text or "").replace("\r\n", "\n")
     m = _QUOTE.search("\n" + t)
     if m and m.start() > 20:
         t = t[: m.start() - 1]

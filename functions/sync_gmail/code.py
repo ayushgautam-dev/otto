@@ -53,6 +53,23 @@ def _split(raw: str) -> list[str]:
     return [a for a in (_addr(x)[1] for x in re.split(r"[,;]", raw or "")) if a]
 
 
+_HTMLISH = re.compile(r"</?(p|br|div|span|table|tr|td|html|body|a|b|strong|em|ul|ol|li|h[1-6]|blockquote|font)\b[^>]*>", re.I)
+
+
+def _plain(text: str) -> str:
+    """Some senders' mail arrives as HTML even in the "text" field. Show it as words:
+    paragraphs and line breaks become new lines, every other tag goes, entities are decoded."""
+    t = text or ""
+    if not _HTMLISH.search(t):
+        return t
+    import html as _html
+    t = re.sub(r"(?is)<(style|script|head)[^>]*>.*?</\1>", " ", t)
+    t = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</tr>|</li>|</h[1-6]>|</blockquote>", "\n", t)
+    t = _html.unescape(re.sub(r"<[^>]+>", "", t))
+    t = re.sub(r"[ \t\r\f\v]+", " ", t)
+    return re.sub(r"\n\s*\n\s*\n+", "\n\n", t).strip()
+
+
 def _iso(ts: str) -> str:
     raw = (ts or "").strip()
     for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S"):
@@ -194,11 +211,12 @@ async def sync_gmail(ctx: FunctionContext, data: SyncGmailInput) -> SyncGmailRes
         else:
             counterpart = from_email if from_email != me else ""
 
-        # a note between my own mailboxes is not a conversation with anybody
-        if counterpart in mine:
+        # a note between my own mailboxes is not a conversation with anybody (the morning
+        # brief is one: from me, to me)
+        if counterpart in mine or (from_email in mine and to_addrs and all(a in mine for a in to_addrs)):
             continue
 
-        body_text = (m.get("messageText") or (m.get("preview") or {}).get("body") or "").strip()
+        body_text = _plain(m.get("messageText") or (m.get("preview") or {}).get("body") or "").strip()
 
         participants = [{"name": from_name, "email": from_email, "role": "from"}]
         participants += [{"email": a, "role": "to"} for a in to_addrs[:12]]

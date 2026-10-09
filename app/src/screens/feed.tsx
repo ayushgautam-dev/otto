@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ArrowUp, FileText, CalendarPlus, Send, Check } from 'lucide-react'
 import {
   useSql, records, rev, lit, greeting, fmtTime,
@@ -214,6 +214,35 @@ function Block({ s, loops, onChange }: {
   )
 }
 
+/* The first minutes: the Feed is open but nothing has been found yet. Show the work
+   being done (collected, read so far, found) so an empty page does not read as broken. */
+function Reading() {
+  const [tick, setTick] = useState(0)
+  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 5000); return () => clearInterval(t) }, [])
+  const q = useSql<{ total: number; unread: number; people: number; loops: number }>(rev(
+    `select (select count(*) from interactions) as total,
+            (select count(*) from interactions where extracted_at is null) as unread,
+            (select count(*) from people) as people,
+            (select count(*) from loops where status='open') as loops`, tick))
+  const c = q.items[0]
+  const total = Number(c?.total ?? 0), unread = Number(c?.unread ?? 0)
+  const read = Math.max(0, total - unread)
+  const pct = total ? Math.round((read / total) * 100) : 0
+  return (
+    <div className="reading" role="status">
+      <b>{tm()} is reading your mail.</b>
+      <p>The first loose ends usually appear within five minutes. You can leave this open or come back.</p>
+      <div className="reading-bar" aria-label={`${pct}% read`}><i style={{ width: `${Math.max(pct, total ? 4 : 0)}%` }} /></div>
+      <div className="reading-nums">
+        <div><b>{total}</b><span>collected</span></div>
+        <div><b>{read}</b><span>read so far</span></div>
+        <div><b>{Number(c?.people ?? 0)}</b><span>people found</span></div>
+        <div><b>{Number(c?.loops ?? 0)}</b><span>loose ends</span></div>
+      </div>
+    </div>
+  )
+}
+
 export function Feed({ userName }: { userName: string }) {
   const catching = useCatching()
   const { version, bump } = useNav()
@@ -301,7 +330,7 @@ export function Feed({ userName }: { userName: string }) {
       <Prepared />
       {loading ? <Loading />
         : blocks.length === 0 && loose.length === 0
-          ? <Empty line={catching ? `${tm()} is reading your mail. Loose ends appear here as they are found.` : "Nothing needs you right now."} />
+          ? (catching ? <Reading /> : <Empty line="Nothing needs you right now." />)
           : (
             <>
               {blocks.map((b) => <Block key={b.s.id} s={b.s} loops={b.loops} onChange={bump} />)}

@@ -107,6 +107,10 @@ async def catch_up_step(ctx: FunctionContext, data: StepInput) -> StepResult:
     def save() -> None:
         state["unread"] = res.unread
         _put(pod, "catchup", json.dumps(state))
+        # the shared reading lease (reader_gate): while this pass reads, a watcher that
+        # fires for a new email stands down instead of starting a second reader
+        if res.read and state.get("reading_until"):
+            _put(pod, "reading_until", state["reading_until"])
 
     def hold(minutes: int) -> None:
         # stand the per-mail trigger down for this person while rows land in bulk

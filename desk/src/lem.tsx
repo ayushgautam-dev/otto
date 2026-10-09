@@ -37,13 +37,16 @@ export const HOME: ChatScope = {
 interface LemApi {
   /** open on a scope and send this message */
   ask: (seed: string, scope?: Partial<ChatScope>) => void
+  /** send this in a scope WITHOUT opening the chat: the work shows up where it was
+   *  asked for (a draft appearing in the item's pane), not as a conversation */
+  write: (seed: string, scope?: Partial<ChatScope>) => void
   /** open on a scope without sending anything */
   show: (scope?: Partial<ChatScope>) => void
   collapse: () => void
   isOpen: boolean
 }
 
-const Ctx = createContext<LemApi>({ ask: () => {}, show: () => {}, collapse: () => {}, isOpen: false })
+const Ctx = createContext<LemApi>({ ask: () => {}, write: () => {}, show: () => {}, collapse: () => {}, isOpen: false })
 export const useLem = () => useContext(Ctx)
 
 type Seed = { text: string; n: number } | null
@@ -81,6 +84,10 @@ export function LemProvider({ children }: { children: ReactNode }) {
     setSeed({ text, n: ++n.current })
     setOpen(true)
   }, [])
+  const write = useCallback((text: string, s?: Partial<ChatScope>) => {
+    setScope((cur) => (s ? { ...HOME, ...s } : cur ?? HOME))
+    setSeed({ text, n: ++n.current })
+  }, [])
   const show = useCallback((s?: Partial<ChatScope>) => {
     if (s) setScope({ ...HOME, ...s })
     else setScope((cur) => cur ?? HOME)
@@ -100,7 +107,7 @@ export function LemProvider({ children }: { children: ReactNode }) {
   }, [isOpen])
 
   return (
-    <Ctx.Provider value={{ ask, show, collapse, isOpen }}>
+    <Ctx.Provider value={{ ask, write, show, collapse, isOpen }}>
       <DockState.Provider value={{ scope, seed, setScope, isOpen, setOpen }}>
         {children}
       </DockState.Provider>

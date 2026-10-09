@@ -27,7 +27,7 @@ interface Nav {
   sheet: SheetTarget | null
   tabs: SheetTarget[]
   /** open (or bring forward) a tab; null closes the whole pane */
-  openSheet: (t: SheetTarget | null) => void
+  openSheet: (t: SheetTarget | null, behind?: boolean) => void
   closeTab: (key: string) => void
   focusTab: (key: string) => void
   bump: () => void
@@ -57,7 +57,9 @@ export function NavProvider({ children }: { children: ReactNode }) {
   // Moving between pages keeps the pane: the point is to work on both at once.
   const navigate = useCallback((to: string) => { window.location.hash = to }, [])
 
-  const openSheet = useCallback((t: SheetTarget | null) => {
+  // `behind` adds or updates the tab without bringing it forward: work asked for from an
+  // item is done in the chat tab, but the person stays looking at the item
+  const openSheet = useCallback((t: SheetTarget | null, behind = false) => {
     if (!t) { setTabs([]); setActive(null); return }
     const k = tabKey(t)
     setTabs((cur) => {
@@ -65,7 +67,7 @@ export function NavProvider({ children }: { children: ReactNode }) {
       if (i >= 0) { const next = [...cur]; next[i] = t; return next }
       return [...cur, t].slice(-MAX_TABS)
     })
-    setActive(k)
+    if (!behind) setActive(k)
   }, [])
 
   const closeTab = useCallback((k: string) => {

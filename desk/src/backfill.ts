@@ -306,7 +306,6 @@ const FRESH_EVERY = 5 * 60_000
 export function useFreshCalendar(sources: string[], onChange: () => void) {
   const key = sources.filter((s) => s === 'google_calendar' || s === 'outlook').sort().join(',')
   useEffect(() => {
-    if (!key) return
     let live = true
     const run = async () => {
       try {
@@ -317,6 +316,13 @@ export function useFreshCalendar(sources: string[], onChange: () => void) {
       if (key.includes('google_calendar')) jobs.push(sync('sync_calendar', { past_days: 1, future_days: 7, max_events: 60, batch_size: 10 }))
       if (key.includes('outlook')) jobs.push(sync('sync_outlook', { what: 'calendar', past_days: 1, future_days: 7, max_events: 60, batch_size: 10 }))
       await Promise.allSettled(jobs)
+      /* And never leave mail sitting unread. Watchers start a reading pass themselves,
+         but if one was missed, this starts it (the pod lets only one run at a time).
+         Not during the first-run catch-up, which reads its own rows. */
+      try {
+        const c = await readCatchUp()
+        if ((!c || c.done) && (await unreadCount()) > 0) await startWorkflow('autopilot_loose_ends')
+      } catch { /* the next watcher or the nightly pass reads them */ }
       if (live) onChange()
     }
     void run()

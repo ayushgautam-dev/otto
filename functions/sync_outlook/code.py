@@ -150,8 +150,9 @@ def _mail(pod: Pod, data: SyncOutlookInput, me: str, mine: set, acct: dict, res:
         else:
             counterpart = from_email if from_email != me else ""
 
-        # a note between my own mailboxes is not a conversation with anybody
-        if counterpart in mine:
+        # a note between my own mailboxes is not a conversation with anybody (the morning
+        # brief is one: from me, to me)
+        if counterpart in mine or (from_email in mine and to_addrs and all(a in mine for a in to_addrs)):
             continue
 
         participants = [{"name": from_name, "email": from_email, "role": "from"}]
