@@ -10,7 +10,8 @@ all, because half a thread has no context.
 `mode: "rules"` settles what needs no judgement:
   * the person wrote somewhere in the thread            -> Read
   * it is from someone they have written to, somebody
-    already known to them, or their own team            -> Read
+    already known to them, a colleague of somebody
+    known (same company domain), or their own team      -> Read
   * meetings and meeting notes                          -> Read
 Everything else is undecided: mail from somebody new that the person has not answered.
 That is where cold pitches live, and also where a first message from a real customer
@@ -24,6 +25,7 @@ alone here and becomes readable when its hold runs out: when in doubt, read.
 """
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 from pydantic import BaseModel, Field
@@ -35,8 +37,8 @@ FREE_MAIL = {
     "gmx.com", "mail.com", "zoho.com", "rediffmail.com", "fastmail.com", "hey.com",
 }
 SORT_AT_LEAST = 4        # fewer undecided threads than this are quicker read than sorted
-MAX_UNDECIDED = 60
-SORT_LEASE_MIN = 4
+MAX_UNDECIDED = 120
+SORT_LEASE_MIN = 6
 
 
 class Verdict(BaseModel):
@@ -91,11 +93,19 @@ async def triage(ctx: FunctionContext, data: TriageInput) -> TriageResult:
         return pod.query(sql).to_dict()["items"]
 
     def mark(ids: list[str], patch: dict) -> None:
-        for i in ids:
+        # one write per row, so side by side: a first run marks a hundred rows or more,
+        # and one after another that is a minute before any reader can start
+        def one(i: str) -> None:
             try:
                 pod.records.update("interactions", i, patch)
             except Exception as exc:
                 res.errors.append(f"{str(i)[:8]}: {str(exc)[:80]}")
+        if len(ids) < 4:
+            for i in ids:
+                one(i)
+            return
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(one, ids))
 
     if (data.mode or "rules").lower() == "apply":
         waiting = rows(
@@ -141,11 +151,14 @@ async def triage(ctx: FunctionContext, data: TriageInput) -> TriageResult:
         by: dict[str, list[dict]] = {}
         for r in waiting:
             by.setdefault(r.get("thread_ref") or str(r["id"]), []).append(r)
-        for thread, items in list(by.items())[:MAX_UNDECIDED]:
+        picked = list(by.items())[:MAX_UNDECIDED]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            openings = list(pool.map(lambda kv: opening_of(kv[1][0]), picked))
+        for (thread, items), opening in zip(picked, openings):
             latest = items[0]
             res.undecided.append(Undecided(
                 thread=thread, sender=next(iter(_emails(latest.get("participants"), "from")), ""),
-                subject=(latest.get("subject") or "")[:140], opening=opening_of(latest), messages=len(items)))
+                subject=(latest.get("subject") or "")[:140], opening=opening, messages=len(items)))
         res.sort = bool(res.undecided)
         return res
 
@@ -174,6 +187,9 @@ async def triage(ctx: FunctionContext, data: TriageInput) -> TriageResult:
         pass
     mine.discard("")
     team = {m.split("@")[-1] for m in mine if "@" in m} - FREE_MAIL
+    # a company the person already deals with: a new name from there is a colleague, not a
+    # stranger, and belongs with the rest of that company's mail
+    known_domains = {k.split("@")[-1] for k in known if "@" in k} - FREE_MAIL
 
     threads: dict[str, list[dict]] = {}
     for r in fresh:
@@ -190,7 +206,8 @@ async def triage(ctx: FunctionContext, data: TriageInput) -> TriageResult:
         senders = {e for x in items for e in _emails(x.get("participants"), "from")} - mine
         i_wrote = thread in my_threads or any((x.get("direction") or "") == "outbound" for x in items)
         if (i_wrote or (senders & known)
-                or any(s.split("@")[-1] in team for s in senders)):
+                or any(s.split("@")[-1] in team or s.split("@")[-1] in known_domains
+                       for s in senders)):
             read_ids += ids
             res.read += 1
         else:
@@ -205,17 +222,17 @@ async def triage(ctx: FunctionContext, data: TriageInput) -> TriageResult:
         return res
 
     lease = (_now() + timedelta(minutes=SORT_LEASE_MIN)).isoformat()
+    # (the sorter fetches the opening lines itself, with `list`; nothing here needs them)
+    mark([str(x["id"]) for _, items in undecided[:MAX_UNDECIDED] for x in items],
+         {"triage": "sorting", "claimed_until": lease})
     for thread, items in undecided[:MAX_UNDECIDED]:
         latest = items[0]
-        opening = opening_of(latest)
         res.undecided.append(Undecided(
             thread=thread,
             sender=next(iter(_emails(latest.get("participants"), "from")), ""),
             subject=(latest.get("subject") or "")[:140],
-            opening=opening,
             messages=len(items),
         ))
-        mark([str(x["id"]) for x in items], {"triage": "sorting", "claimed_until": lease})
     # anything beyond the cap is read rather than left waiting
     extra = [str(x["id"]) for _, items in undecided[MAX_UNDECIDED:] for x in items]
     mark(extra, {"triage": "read"})

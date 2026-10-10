@@ -2,24 +2,25 @@
 #output_type_name: StepResult
 #function_name: catch_up_step
 
-"""One step of loading somebody's older history, run on a timer as that person.
+"""One step of somebody's first-run history, run as that person.
 
-First run loads only the most recent few days so the desk opens quickly. Everything
-older arrives here, a few days at a time, whether or not the app is open: each
-person's own schedule ticks the `catch_up` workflow, whose first node is this
-function. It keeps its place in that person's `settings.catchup` row:
+First run collects the last week in the app so the desk can open, then hands over to the
+`catch_up` workflow, whose first node is this function. It keeps its place in that
+person's `settings.catchup` row:
 
-    {"covered": 6, "target": 21, "sources": ["gmail", ...], "extras": true,
-     "done": false, "unread": 12, "reading_until": "...", "stuck": 0}
+    {"covered": 7, "target": 21, "sources": ["gmail", ...], "extras": false,
+     "loaded": false, "done": false, "unread": 12}
 
-Each tick does at most one thing:
-  * unread rows are waiting  -> ask for a reading pass (`read: true`), unless one was
-    asked for recently and may still be going (`reading_until`);
-  * calendar and meeting notes not loaded yet -> load them whole, once;
-  * mail not back to `target` days yet -> load the next slice;
-  * everything loaded and read -> mark done and let mail triggers resume.
+Each call does at most one thing, in this order:
+  * older history not collected yet -> collect ALL of it now, side by side (the two older
+    weeks of mail, the calendar, meeting notes). Nothing is read until this is done:
+    reading hands one reader a whole company, and a company's story is only whole once
+    every week is in.
+  * unread rows are waiting -> ask for a reading pass (`read: true`);
+  * everything read -> mark done, let watchers resume, and ask for the closing check
+    (`reconcile: true`), which runs after the person has been told it is finished.
 
-Slices are small on purpose: one call that fetches a whole inbox outlives the
+Mail is collected a week at a time: one call that fetches a whole inbox outlives the
 request limit. Duplicates are skipped by the ledger, so an overlap costs nothing.
 """
 
@@ -32,12 +33,12 @@ from lemma_sdk import FunctionContext, Pod
 # A timer may tick at most every 15 minutes, so each tick takes a week of mail.
 SLICE_DAYS = 7
 SLICE_MAX = 80
-READ_LEASE_MIN = 20
+STALL_MIN = 30
 MAIL_FILTER = "-in:spam -in:trash -category:promotions -category:social -category:forums"
 
 
 class StepInput(BaseModel):
-    pass
+    reconciled: bool = False     # the closing check has just finished
 
 
 class StepResult(BaseModel):
@@ -49,8 +50,8 @@ class StepResult(BaseModel):
     covered: int = 0
     unread: int = 0
     done: bool = False
-    # the first week has just been read: group it into topics before loading anything older
-    group: bool = False
+    # everything is read: check what was found against the whole history, once
+    reconcile: bool = False
 
 
 def _now() -> datetime:
@@ -86,6 +87,11 @@ def _unread(pod: Pod) -> int:
     return int((rows[0] or {}).get("n") or 0) if rows else 0
 
 
+def _total(pod: Pod) -> int:
+    rows = pod.query("select count(*) as n from interactions").to_dict()["items"]
+    return int((rows[0] or {}).get("n") or 0) if rows else 0
+
+
 def _day(days_ago: int) -> str:
     d = _now() - timedelta(days=days_ago)
     return f"{d.year}/{d.month}/{d.day}"
@@ -98,6 +104,11 @@ async def catch_up_step(ctx: FunctionContext, data: StepInput) -> StepResult:
         state = json.loads(row["value"]) if row else None
     except Exception:
         state = None
+    if state and data.reconciled:
+        state["reconciled"] = True
+        state.pop("reconciling_until", None)
+        _put(pod, "catchup", json.dumps(state))
+        return StepResult(did="closing check recorded", done=bool(state.get("done")))
     if not state or state.get("done"):
         return StepResult(did="nothing to do", done=True)
 
@@ -109,49 +120,12 @@ async def catch_up_step(ctx: FunctionContext, data: StepInput) -> StepResult:
     def save() -> None:
         state["unread"] = res.unread
         _put(pod, "catchup", json.dumps(state))
-        # the shared reading lease (reader_gate): while this pass reads, a watcher that
-        # fires for a new email stands down instead of starting a second reader
-        if res.read and state.get("reading_until"):
-            _put(pod, "reading_until", state["reading_until"])
 
     def hold(minutes: int) -> None:
         # stand the per-mail trigger down for this person while rows land in bulk
         until = _now() + timedelta(minutes=minutes) if minutes else datetime.fromtimestamp(0, timezone.utc)
         _put(pod, "backfill_until", until.isoformat())
 
-    unread = _unread(pod)
-    res.unread = unread
-    lease = _when(state.get("reading_until"))
-
-    if unread > 0:
-        if lease and lease > _now():
-            res.did = "a reading pass is still going"
-            save()
-            return res
-        # the lease ran out with the same rows still unread: the reader will never
-        # claim them, so stop waiting on them and carry on loading
-        if lease and unread == state.get("unread_at_lease"):
-            state["stuck"] = int(state.get("stuck") or 0) + 1
-        if int(state.get("stuck") or 0) < 2:
-            hold(40)
-            state["reading_until"] = (_now() + timedelta(minutes=READ_LEASE_MIN)).isoformat()
-            state["unread_at_lease"] = unread
-            res.read, res.skip, res.did = True, False, "asked for a reading pass"
-            save()
-            return res
-    else:
-        state["stuck"] = 0
-    state.pop("reading_until", None)
-
-    # Week one is read. Give the desk its shape (topics and their summaries) now, while
-    # the person is looking at it, and load the older weeks on the next step.
-    if not state.get("grouped"):
-        state["grouped"] = True
-        res.group, res.did = True, "first week read; grouping it into topics"
-        save()
-        return res
-
-    hold(40)
     landed = 0
 
     def load(name: str, payload: dict) -> None:
@@ -164,41 +138,96 @@ async def catch_up_step(ctx: FunctionContext, data: StepInput) -> StepResult:
         except Exception:
             pass
 
-    if not state.get("extras"):
-        if "google_calendar" in sources:
-            load("sync_calendar", {
-                "past_days": target, "future_days": 14, "max_events": 150, "batch_size": 10})
-        if "outlook" in sources:
-            load("sync_outlook", {
-                "what": "calendar", "past_days": target, "future_days": 14, "max_events": 150, "batch_size": 10})
-        if "granola" in sources:
-            load("sync_granola", {"time_range": "last_30_days", "batch_size": 10})
+    # ---- 1. collect whatever is not in yet, all of it, before anything is read ----
+    if not state.get("loaded"):
+        hold(40)
+        jobs: list[tuple[str, dict]] = []
+        at = covered
+        while at < target:
+            to = min(target, at + SLICE_DAYS)
+            if "gmail" in sources:
+                jobs.append(("sync_gmail", {
+                    "query": f"after:{_day(to + 1)} before:{_day(max(at - 1, 0))} {MAIL_FILTER}",
+                    "max_messages": SLICE_MAX, "batch_size": 10}))
+            if "outlook" in sources:
+                jobs.append(("sync_outlook", {
+                    "what": "mail", "max_messages": SLICE_MAX, "batch_size": 10,
+                    "since": (_now() - timedelta(days=to + 1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "until": (_now() - timedelta(days=max(at - 1, 0))).strftime("%Y-%m-%dT%H:%M:%SZ")}))
+            at = to
+        if not state.get("extras"):
+            if "google_calendar" in sources:
+                jobs.append(("sync_calendar", {
+                    "past_days": target, "future_days": 14, "max_events": 150, "batch_size": 10}))
+            if "outlook" in sources:
+                jobs.append(("sync_outlook", {
+                    "what": "calendar", "past_days": target, "future_days": 14, "max_events": 150, "batch_size": 10}))
+            if "granola" in sources:
+                jobs.append(("sync_granola", {"time_range": "last_30_days", "batch_size": 10}))
+        # side by side: each is a separate call to a separate source, and waiting for them
+        # one after another is most of what the person waits for before anything is read
+        from concurrent.futures import ThreadPoolExecutor
+        try:
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                list(pool.map(lambda j: load(*j), jobs))
+        except Exception:
+            for j in jobs:
+                load(*j)
+        covered = state["covered"] = res.covered = target
         state["extras"] = True
-        res.did = "loaded calendar and meeting notes"
-    if covered < target:
-        to = min(target, covered + SLICE_DAYS)
-        if "gmail" in sources:
-            load("sync_gmail", {
-                "query": f"after:{_day(to + 1)} before:{_day(max(covered - 1, 0))} {MAIL_FILTER}",
-                "max_messages": SLICE_MAX, "batch_size": 10})
-        if "outlook" in sources:
-            load("sync_outlook", {
-                "what": "mail", "max_messages": SLICE_MAX, "batch_size": 10,
-                "since": (_now() - timedelta(days=to + 1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "until": (_now() - timedelta(days=max(covered - 1, 0))).strftime("%Y-%m-%dT%H:%M:%SZ")})
-        state["covered"] = res.covered = to
-        res.did = (res.did + "; " if res.did else "") + f"loaded mail back to {to} days"
-    elif not res.did:
-        state["done"] = res.done = True
-        hold(0)
-        res.did = "finished"
+        # A collecting call can hand back before its last rows are written. Reading must
+        # not start on half a week, so wait until the ledger has stopped growing.
+        import time
+        seen, still = -1, 0
+        for _ in range(15):     # a collecting call that timed out here is still writing; a function gets two minutes in all
+            n = _total(pod)
+            still = still + 1 if n == seen else 0
+            if still >= 2:
+                break
+            seen = n
+            time.sleep(5)
+        state["loaded"] = True
+        state["loaded_at"] = _now().isoformat()
+        res.unread = max(_unread(pod), landed)
+        res.did = f"collected everything back to {target} days"
+        # more readers for what has just arrived, started here so that reading does not
+        # depend on the app being open (the gate turns away any beyond its limit)
+        if res.unread > 0:
+            for _ in range(2):
+                try:
+                    pod.workflows.create_run("autopilot_loose_ends")
+                except Exception:
+                    break
+        res.read, res.skip = res.unread > 0, not res.unread > 0
         save()
         return res
 
-    res.unread = max(_unread(pod), landed)
-    if res.unread > 0:
-        state["reading_until"] = (_now() + timedelta(minutes=READ_LEASE_MIN)).isoformat()
-        state["unread_at_lease"] = res.unread
-        res.read, res.skip = True, False
+    # ---- 2. read ----
+    unread = _unread(pod)
+    res.unread = unread
+    if unread > 0:
+        # rows that never get read (a reader that keeps failing on them) must not hold
+        # the finish hostage for ever: after a long stall, carry on without them
+        if unread == state.get("unread_seen"):
+            since = _when(state.get("unread_since")) or _now()
+            if _now() - since > timedelta(minutes=STALL_MIN):
+                unread = 0
+        else:
+            state["unread_seen"] = unread
+            state["unread_since"] = _now().isoformat()
+    if unread > 0:
+        hold(40)
+        res.read, res.skip, res.did = True, False, "asked for a reading pass"
+        save()
+        return res
+
+    # ---- 3. finished ----
+    # Everything is read, so the person is told so now. The closing check (what was found,
+    # against the whole history) and the full grouping into topics follow in this same
+    # run, behind the scenes: they take many minutes and nobody should wait on them.
+    state["done"] = res.done = True
+    hold(0)
+    res.reconcile = not state.get("reconciled")
+    res.did = "finished reading; closing check follows"
     save()
     return res

@@ -14,7 +14,7 @@ import { WeatherMark } from '../weather'
 
 import { tm } from '../teammate'
 import { useOpenTask, type TaskRow } from '../tasks'
-import { useCatching } from '../backfill'
+import { useCatching, useProgress, useFinishedSummary, type Progress } from '../backfill'
 /* The Feed answers "what is new and what needs me?".
    A workstream only appears here when it actually needs something. */
 
@@ -216,35 +216,59 @@ function Block({ s, loops, onChange }: {
 
 /* The first minutes: the Feed is open but nothing has been found yet. Show the work
    being done (collected, read so far, found) so an empty page does not read as broken. */
-function Reading() {
-  const [tick, setTick] = useState(0)
-  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 5000); return () => clearInterval(t) }, [])
-  const q = useSql<{ total: number; unread: number; people: number; loops: number }>(rev(
-    `select (select count(*) from interactions) as total,
-            (select count(*) from interactions where extracted_at is null) as unread,
-            (select count(*) from people) as people,
-            (select count(*) from loops where status='open') as loops`, tick))
-  const c = q.items[0]
-  const total = Number(c?.total ?? 0), unread = Number(c?.unread ?? 0)
-  const read = Math.max(0, total - unread)
-  const pct = total ? Math.round((read / total) * 100) : 0
+/* First run, made visible: four numbers and a plain line that it is still going. A strip
+   above the list once there is something to look at. */
+function Reading({ compact }: { compact?: boolean }) {
+  const n = useProgress()
+  if (compact) return (
+    <div className="reading-strip" role="status">
+      <div className="reading-strip-h">
+        <i className="reading-dot" aria-hidden="true" />
+        <b>{tm()} is still reading.</b>
+        <span>More will appear, and some of this may change.</span>
+      </div>
+      <dl className="reading-row">
+        <div><dt>emails collected</dt><dd>{n?.emails ?? 0}</dd></div>
+        <div><dt>people found</dt><dd>{n?.people ?? 0}</dd></div>
+        <div><dt>loose ends found</dt><dd>{n?.found ?? 0}</dd></div>
+        <div><dt>replies prepared</dt><dd>{n?.replies ?? 0}</dd></div>
+      </dl>
+    </div>
+  )
   return (
     <div className="reading" role="status">
       <b>{tm()} is reading your mail.</b>
-      <p>The first loose ends usually appear within five minutes. You can leave this open or come back.</p>
-      <div className="reading-bar" aria-label={`${pct}% read`}><i style={{ width: `${Math.max(pct, total ? 4 : 0)}%` }} /></div>
+      <p>The first loose ends usually appear within a few minutes. You can leave this open or come back.</p>
+      <div className="reading-bar" aria-hidden="true"><i className="going" /></div>
       <div className="reading-nums">
-        <div><b>{total}</b><span>collected</span></div>
-        <div><b>{read}</b><span>read so far</span></div>
-        <div><b>{Number(c?.people ?? 0)}</b><span>people found</span></div>
-        <div><b>{Number(c?.loops ?? 0)}</b><span>loose ends</span></div>
+        <div><b>{n?.emails ?? 0}</b><span>emails collected</span></div>
+        <div><b>{n?.people ?? 0}</b><span>people found</span></div>
+        <div><b>{n?.found ?? 0}</b><span>loose ends found</span></div>
+        <div><b>{n?.replies ?? 0}</b><span>replies prepared</span></div>
       </div>
+    </div>
+  )
+}
+
+/* And once, when it has finished: what was done. */
+function Finished({ n, onClose }: { n: Progress; onClose: () => void }) {
+  const open = Math.max(0, n.found - n.dealt)
+  return (
+    <div className="reading-strip done" role="status">
+      <div className="reading-strip-h"><b>{tm()} has caught up.</b>
+      <span>
+        Went through {n.emails} emails{n.noise > 0 ? `, set aside ${n.noise} as noise` : ''}, found {n.people} people
+        and {n.found} loose ends{n.dealt > 0 ? `; ${n.dealt} had already been dealt with, so ${open} are open` : ''}
+        {n.replies > 0 ? `. ${n.replies} replies are prepared for you` : ''}.
+      </span></div>
+      <button className="reading-x" onClick={onClose}>Got it</button>
     </div>
   )
 }
 
 export function Feed({ userName }: { userName: string }) {
   const catching = useCatching()
+  const finished = useFinishedSummary(catching)
   const { version, bump } = useNav()
   const askLem = useAskLem()
   const [view, setView] = useState<'feed' | 'people' | 'companies'>('feed')
@@ -327,6 +351,8 @@ export function Feed({ userName }: { userName: string }) {
       <Strip />
 
       {view !== 'feed' ? <Lens view={view} /> : (<>
+      {finished && <Finished n={finished.numbers} onClose={finished.dismiss} />}
+      {catching && !loading && (blocks.length > 0 || loose.length > 0) && <Reading compact />}
       <Prepared />
       {loading ? <Loading />
         : blocks.length === 0 && loose.length === 0

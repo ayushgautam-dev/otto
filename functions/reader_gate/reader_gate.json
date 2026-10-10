@@ -41,6 +41,20 @@
         ],
         "resource_name": "interactions",
         "resource_type": "datastore_table"
+      },
+      {
+        "permission_ids": [
+          "workflow.execute"
+        ],
+        "resource_name": "autopilot_loose_ends",
+        "resource_type": "workflow"
+      },
+      {
+        "permission_ids": [
+          "workflow.execute"
+        ],
+        "resource_name": "catch_up",
+        "resource_type": "workflow"
       }
     ]
   },

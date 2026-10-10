@@ -7,14 +7,16 @@ import { setCatchUpSchedule } from './autopilot-sync'
    First run used to load three weeks in one go and hold the person on a progress screen
    until every message had been read, which could be half an hour. Now it is two parts:
 
-   - quickStart: the most recent few days are loaded and the desk opens. Reading them is
-     started but not waited for: a careful read of even twenty messages takes several
-     minutes, and what it finds shows up on the desk as it goes.
-   - catch-up: everything older, a few days at a time. It runs in the pod, not in this
-     tab: the person's own `catch_up` schedule ticks a workflow whose first step loads the
-     next slice and whose second reads it. Where it has got to lives in `settings` under
-     `catchup`, so it carries on with the app closed. The Shell only watches (useCatchUp),
-     groups what was read into topics, and switches the schedule off at the end.
+   - quickStart: the last week is collected and the desk opens.
+   - catch-up, in the pod, not in this tab: the two older weeks are collected straight
+     away, side by side, and only then does reading start. Reading hands one reader
+     everything about one company, so a company's story is read whole and never from half
+     its mail. Up to three readers work side by side on different companies, the small
+     ones first so the desk starts filling early. When everything is read the person is
+     told so; one closing check then goes over what was found against the whole history
+     and closes what was already dealt with. Where it has got to lives in `settings` under `catchup`, so it carries on
+     with the app closed. The Shell only watches (useCatchUp), keeps the readers topped
+     up, and switches the timer off at the end.
 
    Mail is pulled in small slices because one function call that fetches a whole inbox
    outlives the 30 second request limit ("Mail: Request timed out after 30000ms"). */
@@ -30,6 +32,11 @@ export interface CatchUp {
   sources: string[]
   /** calendar and meeting notes are loaded whole, once */
   extras: boolean
+  /** every week is collected; reading only starts after this */
+  loaded?: boolean
+  started_at?: string
+  /** the closing check has run (only pods on the newer first run have this) */
+  reconciled?: boolean
   /** the first slice has been grouped into what the person is working on (kept beside
    *  the state, in its own setting, because the pod rewrites the state itself) */
   grouped?: boolean
@@ -172,8 +179,9 @@ export async function quickStart(sources: string[], say: (phase: string) => void
   const attempt = async (label: string, fn: () => Promise<unknown>) => {
     try { await fn() } catch (e) { trouble.push(`${label}: ${(e as Error)?.message ?? 'did not finish'}`) }
   }
-  // One week first: enough for a desk that is true today, small enough to be read in
-  // minutes. The two weeks before it follow in the background (the catch-up).
+  // One week here, so the desk can open on today's calendar within a couple of minutes.
+  // The pod collects the two weeks before it straight afterwards, and reads once all
+  // three are in.
   const covered = 7
   await holdTrigger(60)
 
@@ -213,10 +221,14 @@ export async function quickStart(sources: string[], say: (phase: string) => void
   }
 
   const unread = await unreadCount()
-  const state: CatchUp = { covered, target: WINDOW_DAYS, sources, extras: false, done: false, unread }
+  const state: CatchUp = {
+    covered, target: WINDOW_DAYS, sources, extras: false, loaded: false, done: false, unread,
+    started_at: new Date().toISOString(),
+  }
   await putSetting('catchup', JSON.stringify(state))
   await putSetting('catchup_grouped', '')
   await putSetting('catchup_wrapped', '')
+  await putSetting('catchup_summary_seen', '')
 
   /* Hand over to the pod: this person's own timer, and one run now so reading starts
      without waiting for the first tick. A pod from before the catch-up workflow existed
@@ -233,9 +245,14 @@ export async function quickStart(sources: string[], say: (phase: string) => void
 /** Load history again from today backwards, for a mailbox connected after first run.
  *  Everything already in the ledger is skipped, so only the new mailbox is read. */
 export async function restartCatchUp(sources: string[]): Promise<void> {
-  const state: CatchUp = { covered: 0, target: WINDOW_DAYS, sources, extras: false, done: false, unread: 0 }
+  const state: CatchUp = {
+    covered: 0, target: WINDOW_DAYS, sources, extras: false, loaded: false, done: false, unread: 0,
+    started_at: new Date().toISOString(),
+  }
   await putSetting('catchup', JSON.stringify(state))
   await putSetting('catchup_wrapped', '')
+  // a mailbox added later is caught up quietly: no second "finished" summary
+  await putSetting('catchup_summary_seen', '1')
   try {
     await setCatchUpSchedule(true)
     await startWorkflow('catch_up')
@@ -260,9 +277,10 @@ const someoneElseIsOnIt = () => {
   try { return Date.now() - Number(localStorage.getItem(LOCK) || 0) < 45000 } catch { return false }
 }
 
-/** Watches the pod load the older history. `onProgress` refreshes the pages as rows land.
- *  The app's own part is small: group the first slice into topics once it has been read,
- *  and at the very end group again, learn how the person writes, and stop the timer. */
+/** Watches the pod collect, read and check the history. `onProgress` refreshes the pages as
+ *  rows land. The app's own part is small: keep the readers topped up, move the pod on to
+ *  its next step without waiting for the timer, and at the very end learn how the person
+ *  writes and stop the timer. */
 export function useCatchUp(onProgress: () => void): CatchUp | null {
   const [state, setState] = useState<CatchUp | null>(null)
   useEffect(() => {
@@ -270,8 +288,7 @@ export function useCatchUp(onProgress: () => void): CatchUp | null {
     void (async () => {
       let last = ''
       let nudged = Date.now()
-      const startedAt = Date.now()
-      let readerAsked = Date.now()
+      let readerAsked = 0   // the first top-up is asked for the moment collecting ends
       // long enough for three weeks of slow reading; the pod carries on regardless
       for (let i = 0; live && i < 720; i++) {
         const s = await readCatchUp()
@@ -279,46 +296,95 @@ export function useCatchUp(onProgress: () => void): CatchUp | null {
         const wrapped = !!(await getSetting('catchup_wrapped'))?.value
         if (s.done && wrapped) { setState(null); return }
         setState(s)
-        const sig = `${s.covered}:${s.unread}:${s.extras}:${s.done}`
+        const unread = await unreadCount()
+        const sig = `${s.covered}:${unread}:${s.loaded}:${s.done}`
         if (sig !== last) { last = sig; onProgress() }
 
         if (!someoneElseIsOnIt()) {
           beat()
-          const unread = await unreadCount()
-          // while there is mail waiting, keep the readers topped up: one starts with the
-          // catch-up itself, and these join it a little later so they do not all sort at once
-          if (unread > 0 && Date.now() - readerAsked > 45_000) {
-            readerAsked = Date.now()
-            await startReader().catch(() => null)
-          }
-          if (!s.grouped && unread === 0 && Date.now() - startedAt > 180_000) {
-            // what was just read, grouped, so the desk has shape before older mail arrives
-            await putSetting('catchup_grouped', '1')
-            await runWorkflow('autopilot_situations', 180_000).catch(() => null)
-            onProgress()
-          } else if (!s.done && Date.now() - nudged > 120_000) {
-            /* More to load or to read: do not wait for the timer's next tick. This joins a
-               run that is already going, and a run that finds a reader still at work
-               stands down by itself, so asking again every couple of minutes is safe. */
-            nudged = Date.now()
-            await startWorkflow('catch_up').catch(() => null)
-          } else if (s.done) {
+          if (s.done) {
             await putSetting('catchup_wrapped', '1')
             await setCatchUpSchedule(false).catch(() => null)
-            await runWorkflow('autopilot_situations', 180_000).catch(() => null)
             // every draft is only worth sending if it sounds like them; their sent mail is the sample
             await runWorkflow('autopilot_learn_voice', 180_000).catch(() => null)
             onProgress()
             if (live) setState(null)
             return
           }
+          // once everything is collected, keep the readers topped up: the pod's gate
+          // turns away any beyond the number it allows, so asking again is always safe
+          if (s.loaded && unread > 0 && Date.now() - readerAsked > 45_000) {
+            readerAsked = Date.now()
+            await startReader().catch(() => null)
+          }
+          /* Move the pod on without waiting for the timer's next tick: collecting, then the
+             closing check, then finishing. This joins a run that is already going, so
+             asking again is safe. More often when nothing is left to read, because then
+             the pod is the only thing that can take the next step. */
+          if (Date.now() - nudged > (unread === 0 || !s.loaded ? 40_000 : 120_000)) {
+            nudged = Date.now()
+            // After collecting, a step is quick and safe to repeat, and it must not wait
+            // behind an earlier run that has gone on to group topics or write replies.
+            if (s.loaded) await wf().runs.create('catch_up').catch(() => null)
+            else await startWorkflow('catch_up').catch(() => null)
+          }
         }
-        await sleep(20000)
+        await sleep(15000)
       }
     })()
     return () => { live = false }
   }, [])
   return state && !state.done ? state : null
+}
+
+/** The four numbers shown while history is being read, and in the summary afterwards. */
+export interface Progress { emails: number; people: number; found: number; replies: number; noise: number; dealt: number }
+
+export async function readProgress(): Promise<Progress> {
+  const z: Progress = { emails: 0, people: 0, found: 0, replies: 0, noise: 0, dealt: 0 }
+  try {
+    const r = (await sql<Record<keyof Progress, number>>(
+      `select (select count(*) from interactions where kind='email') as emails,
+              (select count(*) from people) as people,
+              (select count(*) from loops) as found,
+              (select count(*) from drafts) as replies,
+              (select count(*) from interactions where triage='noise' or extractor_version in ('noise','prefilter')) as noise,
+              (select count(*) from loops where close_reason like 'Already dealt with:%') as dealt`))[0]
+    if (r) for (const k of Object.keys(z) as (keyof Progress)[]) z[k] = Number(r[k] ?? 0) || 0
+  } catch { /* numbers are a courtesy; a failed count shows zeros */ }
+  return z
+}
+
+export function useProgress(everyMs = 5000): Progress | null {
+  const [p, setP] = useState<Progress | null>(null)
+  useEffect(() => {
+    let live = true
+    const go = () => { void readProgress().then((x) => { if (live) setP(x) }) }
+    go()
+    const t = setInterval(go, everyMs)
+    return () => { live = false; clearInterval(t) }
+  }, [everyMs])
+  return p
+}
+
+/** After first run has finished: what was done, shown once until the person dismisses it. */
+export function useFinishedSummary(catching: CatchUp | null): { numbers: Progress; dismiss: () => void } | null {
+  const [numbers, setNumbers] = useState<Progress | null>(null)
+  useEffect(() => {
+    if (catching) { setNumbers(null); return }
+    let live = true
+    void (async () => {
+      const s = await readCatchUp()
+      // (only a first run on this version records when it started)
+      if (!s?.done || !s.started_at) return
+      if ((await getSetting('catchup_summary_seen'))?.value) return
+      const n = await readProgress()
+      if (live) setNumbers(n)
+    })()
+    return () => { live = false }
+  }, [catching])
+  if (!numbers) return null
+  return { numbers, dismiss: () => { setNumbers(null); void putSetting('catchup_summary_seen', '1') } }
 }
 
 /* Keep today's calendar honest while the app is open.
@@ -329,9 +395,11 @@ export function useCatchUp(onProgress: () => void): CatchUp | null {
    read (yesterday to a week ahead), and at most once every few minutes. */
 const FRESH = 'desk-calendar-fresh'
 const FRESH_EVERY = 5 * 60_000
+const NOTES = 'desk-notes-fresh'
+const NOTES_EVERY = 30 * 60_000
 
 export function useFreshCalendar(sources: string[], onChange: () => void) {
-  const key = sources.filter((s) => s === 'google_calendar' || s === 'outlook').sort().join(',')
+  const key = sources.filter((s) => s === 'google_calendar' || s === 'outlook' || s === 'granola').sort().join(',')
   useEffect(() => {
     let live = true
     const run = async () => {
@@ -342,6 +410,16 @@ export function useFreshCalendar(sources: string[], onChange: () => void) {
       const jobs: Promise<unknown>[] = []
       if (key.includes('google_calendar')) jobs.push(sync('sync_calendar', { past_days: 1, future_days: 7, max_events: 60, batch_size: 10 }))
       if (key.includes('outlook')) jobs.push(sync('sync_outlook', { what: 'calendar', past_days: 1, future_days: 7, max_events: 60, batch_size: 10 }))
+      // Meeting notes too, less often: what was promised in this morning's call should
+      // not wait for tonight. Nothing pushes them to us, so the app asks.
+      if (key.includes('granola')) {
+        let due = true
+        try { due = Date.now() - Number(localStorage.getItem(NOTES) || 0) > NOTES_EVERY } catch { /* just ask */ }
+        if (due) {
+          try { localStorage.setItem(NOTES, String(Date.now())) } catch { /* fine */ }
+          jobs.push(sync('sync_granola', { time_range: 'this_week', batch_size: 10 }))
+        }
+      }
       await Promise.allSettled(jobs)
       /* And never leave mail sitting unread. Watchers start a reading pass themselves,
          but if one was missed, this starts it (the pod lets only one run at a time).

@@ -970,3 +970,21 @@ button.block-name { text-align: left; }
 .reading-nums > div { display: flex; flex-direction: column; padding: 10px 12px; border-radius: var(--r-2); background: var(--soft); }
 .reading-nums b { font-size: 22px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .reading-nums span { font-size: 12px; color: var(--muted); }
+.reading-bar i.going { width: 35%; animation: reading-go 1.8s ease-in-out infinite; }
+@keyframes reading-go { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .reading-bar i.going { animation: none; width: 100%; opacity: .5; } }
+.reading-strip { display: flex; align-items: center; justify-content: space-between; gap: 10px 24px; flex-wrap: wrap; margin: 0 0 16px; padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--r-3); background: var(--panel); }
+.reading-strip-h { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 13.5px; min-width: 0; }
+.reading-strip-h b { font-weight: 600; }
+.reading-strip-h span { color: var(--muted); }
+.reading-dot { flex: none; align-self: center; width: 8px; height: 8px; border-radius: 50%; background: var(--flag); animation: reading-pulse 1.6s ease-in-out infinite; }
+@keyframes reading-pulse { 0%, 100% { opacity: .35; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .reading-dot { animation: none; } }
+.reading-row { display: flex; gap: 18px; margin: 0; flex-wrap: wrap; }
+.reading-row > div { display: flex; flex-direction: row-reverse; align-items: baseline; gap: 6px; }
+.reading-row dd { margin: 0; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.reading-row dt { font-size: 12px; color: var(--muted); }
+.reading-x { padding: 6px 12px; border-radius: 999px; font: inherit; font-size: 13px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; }
+@media (max-width: 520px) { .reading-nums { grid-template-columns: repeat(2, 1fr); } }
+
+.fr-input { width: min(340px, 100%); padding: 10px 12px; margin: 0 0 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font: inherit; font-size: 15px; color: inherit; }

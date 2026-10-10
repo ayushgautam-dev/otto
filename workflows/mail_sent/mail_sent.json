@@ -77,10 +77,22 @@
       "id": "e12",
       "label": null,
       "source": "after",
-      "target": "drafts"
+      "target": "topics"
     },
     {
       "id": "e13",
+      "label": null,
+      "source": "after",
+      "target": "drafts"
+    },
+    {
+      "id": "e14",
+      "label": null,
+      "source": "topics",
+      "target": "end"
+    },
+    {
+      "id": "e15",
       "label": null,
       "source": "drafts",
       "target": "end"
@@ -192,7 +204,7 @@
         "input_mapping": {
           "message": {
             "type": "literal",
-            "value": "Sort new mail into two piles, Read or Noise. That is all you do in this run: do not write commitments, people or anything else, do not open mail bodies beyond the opening lines you are given, and do not inspect functions, tables or files.\n\n1. Get what is waiting: `lemma functions run triage --data '{\"mode\":\"list\"}' --output json`. Each entry is one conversation from somebody the person has never written to and has not answered: `thread`, `sender`, `subject`, `opening`.\n2. Decide each one.\n   NOISE: a newsletter, product update, notification, receipt, automated alert, event promotion, or a cold pitch \u2014 a stranger selling a product or service, an agency offering candidates, design, SEO or development work, or an unsolicited investment or partnership template.\n   READ: a real person asking this person for something or answering something; a customer, candidate, investor, partner or supplier writing for the first time about real business; anything about money owed, a contract, a deadline, legal or the security of their own accounts. A first message from a stranger that asks a specific question about the person's own product or work is READ, not a pitch.\n   If you are not sure, it is READ. Wrongly reading costs a minute; wrongly discarding hides something from them.\n3. Save every verdict in ONE call: write verdicts.json as {\"mode\":\"apply\",\"verdicts\":[{\"thread\":\"<thread>\",\"noise\":true,\"reason\":\"cold pitch for SEO services\"},{\"thread\":\"<thread>\",\"noise\":false}]} and run `lemma functions run triage --data @verdicts.json --output json`. Give each NOISE a reason of a few plain words.\n4. Reply with the two counts only."
+            "value": "Sort new mail into two piles, Read or Noise. That is all you do in this run: do not write commitments, people or anything else, do not open mail bodies beyond the opening lines you are given, and do not inspect functions, tables or files.\n\n1. Get what is waiting: `lemma functions run triage --data '{\"mode\":\"list\"}' --output json`. Each entry is one conversation from somebody the person has never written to and has not answered: `thread`, `sender`, `subject`, `opening`.\n2. Decide each one.\n   NOISE: a newsletter, product update, notification, receipt, automated alert, event promotion, or a cold pitch \u2014 a stranger selling a product or service, an agency offering candidates, design, SEO or development work, or an unsolicited investment or partnership template.\n   READ: a real person asking this person for something or answering something; a customer, candidate, investor, partner or supplier writing for the first time about real business; anything about money owed, a contract, a deadline, legal or the security of their own accounts. A first message from a stranger that asks a specific question about the person's own product or work is READ, not a pitch.\n   Automated is not the same as noise. A message written by a tool, a bot or an AI agent is READ when it asks this person to decide, check, answer or fix something, when it reports a problem with their own product, automations, money or accounts that needs them, or when it is the only written record of a meeting or call they were in (a recap or transcript). It is NOISE only when it merely informs and nothing is asked: a digest, a receipt, a routine status or 'was paused' alert, a join request, a product update.\n   Judge every conversation the same way each time: decide from what it asks of the person, not from how it is formatted or who sent it.\n   If you are not sure, it is READ. Wrongly reading costs a minute; wrongly discarding hides something from them.\n3. Save every verdict in ONE call: write verdicts.json as {\"mode\":\"apply\",\"verdicts\":[{\"thread\":\"<thread>\",\"noise\":true,\"reason\":\"cold pitch for SEO services\"},{\"thread\":\"<thread>\",\"noise\":false}]} and run `lemma functions run triage --data @verdicts.json --output json`. Give each NOISE a reason of a few plain words.\n4. Reply with the two counts only."
           }
         }
       },
@@ -207,7 +219,12 @@
         "input_mapping": {
           "message": {
             "type": "literal",
-            "value": "Load the otto-notice skill and follow it exactly. Read the unread rows in the interaction ledger and turn them into commitments, people, companies, timeline entries and board cards. Only open commitments from the last three weeks. Filter cold outbound aggressively. Never open a commitment you were only copied on. Check what is already open before writing anything so the same obligation never becomes a second row. Write through ingest_open_loops and mark everything you read with mark_extracted, including the noise. Do not send anything. Report totals only. Start reading straight away: do not inspect functions, tables or files first. When pending_interactions returns no rows, stop at once and do nothing else."
+            "value": "Load the otto-notice skill and follow it exactly. Read the unread rows in the interaction ledger and turn them into commitments, people, companies, timeline entries and board cards. Only open commitments from the last three weeks. Filter cold outbound aggressively. Never open a commitment you were only copied on. Check what is already open before writing anything so the same obligation never becomes a second row. Write through ingest_open_loops and mark everything you read with mark_extracted, including the noise. Do not send anything. Report totals only. Start reading straight away: do not inspect functions, tables or files first. When pending_interactions returns no rows, stop at once and do nothing else. Your reader name for this run is the `reader` value given to you alongside this message; pass it as \"reader\" in every pending_interactions call."
+          },
+          "reader": {
+            "optional": false,
+            "type": "expression",
+            "value": "gate.slot"
           }
         }
       },
@@ -240,15 +257,34 @@
       "config": {
         "rules": [
           {
+            "condition": "released.group",
+            "next_node_id": "topics"
+          },
+          {
             "condition": "released.draft",
             "next_node_id": "drafts"
           }
         ]
       },
       "id": "after",
-      "label": "Anything newly owed?",
+      "label": "First topics, or anything newly owed?",
       "position": null,
       "type": "DECISION"
+    },
+    {
+      "config": {
+        "agent_name": "pod_default",
+        "input_mapping": {
+          "message": {
+            "type": "literal",
+            "value": "Refresh the Feed's topics and the person's workstreams. Follow your writing rules in /memory/AGENTS.md exactly.\n\nFIRST \u2014 the person's notes. Read `corrections` where applied is not true. Each is the person telling you something you could not see (\"already made the WhatsApp group\", \"discussed on a call, not needed\", \"that summary is wrong\"). Act on each one now: reword or close the commitment it concerns (closed_by='manual', close_reason quoting their words, when they say it is done or not needed), fix the summary or workstream it is about, then set applied=true.\n\nTOPICS (`situations` table)\n1. Read every open row in `loops`, with its person, company and work_project.\n2. Group them. A commitment that belongs to a workstream joins that workstream's topic (anchor='workstream', set work_project_id). Otherwise group by what it is about \u2014 usually one per person (anchor='person', set person_id). Several people on the same thing (one hiring round, one customer) belong in ONE topic.\n3. `title`: the topic in the person's own words \u2014 'Acme', 'Founding designer hire' \u2014 never a category.\n4. `summary`: AT MOST TWO SENTENCES AND 220 CHARACTERS. Lead with what needs the person now, with the real date, amount or name; then the one thing they are waiting on, if any. Read timeline_events and the commitments' provenance so every word is true. Never use: loop, entity, record, evidence, thread, status, pending, action item, reply owed, awaiting reply, workstream, situation.\n5. `urgency` = the most urgent of its commitments; status='active'; last_seen_at=now. Update the existing row for an anchor rather than creating a second. Mark a topic whose commitments are all closed status='resolved'.\n\nThis is the first pass, run while the rest of the mail is still being read: do ONLY the topics above. Do not create workstreams or boards now, and do not read function source or survey the pod. Be quick: the person is watching an empty desk fill up."
+          }
+        }
+      },
+      "id": "topics",
+      "label": "Give the desk its first topics",
+      "position": null,
+      "type": "AGENT"
     },
     {
       "config": {

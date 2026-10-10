@@ -6,6 +6,7 @@ import { Orb } from '../ui'
 import { ensureMyAutopilots, ensureSkills, loadCatalog, type CatalogEntry } from '../autopilot-sync'
 import { quickStart, putSetting, unreadCount } from '../backfill'
 import { useTeammateFace, useRenameTeammate } from '../teammate'
+import { readWhatsApp, setUpWhatsApp, whatsAppLink, lastFour, type WhatsApp } from '../whatsapp'
 
 /* First run.
    Nobody should meet an empty product, and nobody should have to read to get in.
@@ -18,7 +19,7 @@ import { useTeammateFace, useRenameTeammate } from '../teammate'
    - Only the most recent few days are read here, so the desk opens in a couple of
      minutes. The older history carries on behind the product (see backfill.ts). */
 
-type Step = 'welcome' | 'connect' | 'about' | 'working' | 'done'
+type Step = 'welcome' | 'connect' | 'about' | 'whatsapp' | 'working' | 'done'
 
 interface Source {
   app: string
@@ -59,8 +60,11 @@ export async function needsFirstRun(): Promise<boolean> {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /** Kinds of work, as things to tap. What is picked tells the teammate what to watch for. */
-const WORK = ['Customers', 'Sales', 'Hiring', 'Product', 'Engineering', 'Marketing',
-  'Finance', 'Operations', 'Partners', 'Investors', 'Legal', 'Support']
+const WORK = ['Sales', 'Customer success', 'Hiring', 'Product', 'Engineering', 'Marketing',
+  'Finance', 'Operations', 'Partnerships', 'Fundraising', 'Legal', 'Support']
+
+/** The WhatsApp card is built but not switched on yet: turning it on has not been tried end to end. */
+const WHATSAPP_CARD = false
 
 const STAGES = ['mail', 'calendar'] as const
 
@@ -91,6 +95,27 @@ export function FirstRun({ name, onDone }: { name: string; onDone: () => void })
   const [shifts, setShifts] = useState<CatalogEntry[]>([])
   const [unread, setUnread] = useState(0)
   const started = useRef(false)
+  /* Collecting starts the moment the work card is done. The WhatsApp card is shown over
+     it, so the minute it takes is spent on something useful and not on a progress bar. */
+  const [finished, setFinished] = useState(false)
+  const [wa, setWa] = useState<WhatsApp | null>(null)
+  const [waNumber, setWaNumber] = useState('')
+  const [waBusy, setWaBusy] = useState(false)
+  const [waReady, setWaReady] = useState(false)
+  const [waNote, setWaNote] = useState('')
+  useEffect(() => { if (WHATSAPP_CARD) void readWhatsApp().then(setWa) }, [])
+  const afterWhatsApp = () => setStep(finished ? 'done' : 'working')
+  const connectWhatsApp = async () => {
+    setWaBusy(true); setWaNote('')
+    try {
+      const out = await setUpWhatsApp(wa?.mine ? undefined : waNumber)
+      setWa(out)
+      if (out.handle) setWaReady(true)
+      else setWaNote('WhatsApp is not available in this workspace yet. You can add it later.')
+    } catch {
+      setWaNote('That did not go through. You can add WhatsApp later from your profile.')
+    } finally { setWaBusy(false) }
+  }
 
   const isOn = (s: Source) => Boolean(s.connected || s.status === 'connected')
 
@@ -167,7 +192,6 @@ export function FirstRun({ name, onDone }: { name: string; onDone: () => void })
   const begin = useCallback(async () => {
     if (started.current) return
     started.current = true
-    setStep('working')
     const tick = setInterval(() => { void refreshCounts() }, 4000)
     const failed: string[] = []
     try {
@@ -196,19 +220,20 @@ export function FirstRun({ name, onDone }: { name: string; onDone: () => void })
     setUnread(await unreadCount())
     setTrouble(failed)
     await putSetting('onboarded_at', new Date().toISOString())
-    setStep('done')
+    setFinished(true)
+    setStep((now) => (now === 'working' ? 'done' : now))
   }, [connected, refreshCounts, work, typed, podName])
 
   /* ---------------- chrome ---------------- */
 
-  const at = { welcome: 0, connect: 1, about: 2, working: 3, done: 3 }[step]
+  const at = { welcome: 0, connect: 1, about: 2, whatsapp: 3, working: 4, done: 4 }[step]
   const stageAt = Math.max(0, STAGES.indexOf(stage as typeof STAGES[number]))
 
   return (
     <div className="firstrun">
       <div className={`fr-card fr-${step}`}>
         <div className="fr-dots" aria-hidden="true">
-          {[0, 1, 2, 3].map((i) => <i key={i} className={i <= at ? 'on' : ''} />)}
+          {[0, 1, 2, 3, 4].map((i) => <i key={i} className={i <= at ? 'on' : ''} />)}
         </div>
 
         {step === 'welcome' && (
@@ -270,7 +295,7 @@ export function FirstRun({ name, onDone }: { name: string; onDone: () => void })
 
         {step === 'about' && (
           <>
-            <h1>What is your work?</h1>
+            <h1>What do you work on?</h1>
             <p className="fr-sub">Pick any that fit.</p>
             <div className="fr-chips">
               {WORK.map((w) => {
@@ -282,10 +307,42 @@ export function FirstRun({ name, onDone }: { name: string; onDone: () => void })
               })}
             </div>
             <div className="btn-row">
-              <button className="btn primary lg" onClick={() => void begin()}>
+              <button className="btn primary lg" onClick={() => { void begin(); setStep(WHATSAPP_CARD && wa?.offered ? 'whatsapp' : 'working') }}>
                 Continue <ArrowRight size={15} strokeWidth={2} />
               </button>
             </div>
+          </>
+        )}
+
+        {step === 'whatsapp' && (
+          <>
+            <h1>{waReady ? 'WhatsApp is on.' : `Talk to ${teammate} on WhatsApp.`}</h1>
+            {waReady && wa?.handle ? (
+              <>
+                <p className="fr-sub">Message <b>{wa.handle}</b> from your phone. Say hi.</p>
+                <div className="btn-row">
+                  <a className="btn primary lg" href={whatsAppLink(wa.handle)} target="_blank" rel="noreferrer">Open WhatsApp</a>
+                  <button className="btn lg" onClick={afterWhatsApp}>Continue <ArrowRight size={15} strokeWidth={2} /></button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="fr-sub">{wa?.mine
+                  ? `Ask and get nudged from your phone. We will use your number ending ${lastFour(wa.mine)}.`
+                  : 'Ask and get nudged from your phone. Add the number you use on WhatsApp.'}</p>
+                {!wa?.mine && (
+                  <input className="fr-input" type="tel" inputMode="tel" autoComplete="tel" placeholder="+1 555 010 0199"
+                    aria-label="Your WhatsApp number, with country code" value={waNumber}
+                    onChange={(e) => setWaNumber(e.target.value)} />
+                )}
+                {waNote && <p className="fr-note">{waNote}</p>}
+                <div className="btn-row">
+                  <button className="btn primary lg" disabled={waBusy || (!wa?.mine && waNumber.replace(/\D/g, '').length < 8)}
+                    onClick={() => void connectWhatsApp()}>{waBusy ? 'Setting up…' : 'Turn on WhatsApp'}</button>
+                  <button className="btn lg" onClick={afterWhatsApp}>Not now</button>
+                </div>
+              </>
+            )}
           </>
         )}
 

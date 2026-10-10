@@ -17,7 +17,7 @@
       "id": "e2",
       "label": null,
       "source": "more",
-      "target": "topics"
+      "target": "recon"
     },
     {
       "id": "e3",
@@ -28,77 +28,101 @@
     {
       "id": "e4",
       "label": null,
-      "source": "topics",
-      "target": "end"
+      "source": "recon",
+      "target": "wrap"
     },
     {
       "id": "e5",
+      "label": null,
+      "source": "wrap",
+      "target": "regroup"
+    },
+    {
+      "id": "e6",
+      "label": null,
+      "source": "regroup",
+      "target": "end"
+    },
+    {
+      "id": "e7",
       "label": null,
       "source": "gate",
       "target": "decide"
     },
     {
-      "id": "e6",
+      "id": "e8",
       "label": null,
       "source": "decide",
       "target": "rules"
     },
     {
-      "id": "e7",
+      "id": "e9",
       "label": null,
       "source": "decide",
       "target": "end"
     },
     {
-      "id": "e8",
+      "id": "e10",
       "label": null,
       "source": "rules",
       "target": "route"
     },
     {
-      "id": "e9",
-      "label": null,
-      "source": "route",
-      "target": "notice"
-    },
-    {
-      "id": "e10",
-      "label": null,
-      "source": "route",
-      "target": "sort"
-    },
-    {
       "id": "e11",
       "label": null,
-      "source": "sort",
+      "source": "route",
       "target": "notice"
     },
     {
       "id": "e12",
       "label": null,
+      "source": "route",
+      "target": "sort"
+    },
+    {
+      "id": "e13",
+      "label": null,
+      "source": "sort",
+      "target": "notice"
+    },
+    {
+      "id": "e14",
+      "label": null,
       "source": "notice",
       "target": "released"
     },
     {
-      "id": "e13",
+      "id": "e15",
       "label": null,
       "source": "released",
       "target": "after"
     },
     {
-      "id": "e14",
+      "id": "e16",
       "label": null,
       "source": "after",
       "target": "end"
     },
     {
-      "id": "e15",
+      "id": "e17",
+      "label": null,
+      "source": "after",
+      "target": "topics"
+    },
+    {
+      "id": "e18",
       "label": null,
       "source": "after",
       "target": "drafts"
     },
     {
-      "id": "e16",
+      "id": "e19",
+      "label": null,
+      "source": "topics",
+      "target": "end"
+    },
+    {
+      "id": "e20",
       "label": null,
       "source": "drafts",
       "target": "end"
@@ -122,8 +146,8 @@
       "config": {
         "rules": [
           {
-            "condition": "step.group",
-            "next_node_id": "topics"
+            "condition": "step.reconcile",
+            "next_node_id": "recon"
           },
           {
             "condition": "step.skip",
@@ -132,7 +156,7 @@
         ]
       },
       "id": "more",
-      "label": "Group, read, or nothing?",
+      "label": "Read, check, or nothing?",
       "position": null,
       "type": "DECISION"
     },
@@ -200,7 +224,7 @@
         "input_mapping": {
           "message": {
             "type": "literal",
-            "value": "Sort new mail into two piles, Read or Noise. That is all you do in this run: do not write commitments, people or anything else, do not open mail bodies beyond the opening lines you are given, and do not inspect functions, tables or files.\n\n1. Get what is waiting: `lemma functions run triage --data '{\"mode\":\"list\"}' --output json`. Each entry is one conversation from somebody the person has never written to and has not answered: `thread`, `sender`, `subject`, `opening`.\n2. Decide each one.\n   NOISE: a newsletter, product update, notification, receipt, automated alert, event promotion, or a cold pitch \u2014 a stranger selling a product or service, an agency offering candidates, design, SEO or development work, or an unsolicited investment or partnership template.\n   READ: a real person asking this person for something or answering something; a customer, candidate, investor, partner or supplier writing for the first time about real business; anything about money owed, a contract, a deadline, legal or the security of their own accounts. A first message from a stranger that asks a specific question about the person's own product or work is READ, not a pitch.\n   If you are not sure, it is READ. Wrongly reading costs a minute; wrongly discarding hides something from them.\n3. Save every verdict in ONE call: write verdicts.json as {\"mode\":\"apply\",\"verdicts\":[{\"thread\":\"<thread>\",\"noise\":true,\"reason\":\"cold pitch for SEO services\"},{\"thread\":\"<thread>\",\"noise\":false}]} and run `lemma functions run triage --data @verdicts.json --output json`. Give each NOISE a reason of a few plain words.\n4. Reply with the two counts only."
+            "value": "Sort new mail into two piles, Read or Noise. That is all you do in this run: do not write commitments, people or anything else, do not open mail bodies beyond the opening lines you are given, and do not inspect functions, tables or files.\n\n1. Get what is waiting: `lemma functions run triage --data '{\"mode\":\"list\"}' --output json`. Each entry is one conversation from somebody the person has never written to and has not answered: `thread`, `sender`, `subject`, `opening`.\n2. Decide each one.\n   NOISE: a newsletter, product update, notification, receipt, automated alert, event promotion, or a cold pitch \u2014 a stranger selling a product or service, an agency offering candidates, design, SEO or development work, or an unsolicited investment or partnership template.\n   READ: a real person asking this person for something or answering something; a customer, candidate, investor, partner or supplier writing for the first time about real business; anything about money owed, a contract, a deadline, legal or the security of their own accounts. A first message from a stranger that asks a specific question about the person's own product or work is READ, not a pitch.\n   Automated is not the same as noise. A message written by a tool, a bot or an AI agent is READ when it asks this person to decide, check, answer or fix something, when it reports a problem with their own product, automations, money or accounts that needs them, or when it is the only written record of a meeting or call they were in (a recap or transcript). It is NOISE only when it merely informs and nothing is asked: a digest, a receipt, a routine status or 'was paused' alert, a join request, a product update.\n   Judge every conversation the same way each time: decide from what it asks of the person, not from how it is formatted or who sent it.\n   If you are not sure, it is READ. Wrongly reading costs a minute; wrongly discarding hides something from them.\n3. Save every verdict in ONE call: write verdicts.json as {\"mode\":\"apply\",\"verdicts\":[{\"thread\":\"<thread>\",\"noise\":true,\"reason\":\"cold pitch for SEO services\"},{\"thread\":\"<thread>\",\"noise\":false}]} and run `lemma functions run triage --data @verdicts.json --output json`. Give each NOISE a reason of a few plain words.\n4. Reply with the two counts only."
           }
         }
       },
@@ -215,7 +239,12 @@
         "input_mapping": {
           "message": {
             "type": "literal",
-            "value": "Load the otto-notice skill and follow it exactly. Read the unread rows in the interaction ledger and turn them into commitments, people, companies, timeline entries and board cards. Only open commitments from the last three weeks. Filter cold outbound aggressively. Never open a commitment you were only copied on. Check what is already open before writing anything so the same obligation never becomes a second row. Write through ingest_open_loops and mark everything you read with mark_extracted, including the noise. Do not send anything. Report totals only. Start reading straight away: do not inspect functions, tables or files first. When pending_interactions returns no rows, stop at once and do nothing else."
+            "value": "Load the otto-notice skill and follow it exactly. Read the unread rows in the interaction ledger and turn them into commitments, people, companies, timeline entries and board cards. Only open commitments from the last three weeks. Filter cold outbound aggressively. Never open a commitment you were only copied on. Check what is already open before writing anything so the same obligation never becomes a second row. Write through ingest_open_loops and mark everything you read with mark_extracted, including the noise. Do not send anything. Report totals only. Start reading straight away: do not inspect functions, tables or files first. When pending_interactions returns no rows, stop at once and do nothing else. Your reader name for this run is the `reader` value given to you alongside this message; pass it as \"reader\" in every pending_interactions call."
+          },
+          "reader": {
+            "optional": false,
+            "type": "expression",
+            "value": "gate.slot"
           }
         }
       },
@@ -248,15 +277,34 @@
       "config": {
         "rules": [
           {
+            "condition": "released.group",
+            "next_node_id": "topics"
+          },
+          {
             "condition": "released.draft",
             "next_node_id": "drafts"
           }
         ]
       },
       "id": "after",
-      "label": "Anything newly owed?",
+      "label": "First topics, or anything newly owed?",
       "position": null,
       "type": "DECISION"
+    },
+    {
+      "config": {
+        "agent_name": "pod_default",
+        "input_mapping": {
+          "message": {
+            "type": "literal",
+            "value": "Refresh the Feed's topics and the person's workstreams. Follow your writing rules in /memory/AGENTS.md exactly.\n\nFIRST \u2014 the person's notes. Read `corrections` where applied is not true. Each is the person telling you something you could not see (\"already made the WhatsApp group\", \"discussed on a call, not needed\", \"that summary is wrong\"). Act on each one now: reword or close the commitment it concerns (closed_by='manual', close_reason quoting their words, when they say it is done or not needed), fix the summary or workstream it is about, then set applied=true.\n\nTOPICS (`situations` table)\n1. Read every open row in `loops`, with its person, company and work_project.\n2. Group them. A commitment that belongs to a workstream joins that workstream's topic (anchor='workstream', set work_project_id). Otherwise group by what it is about \u2014 usually one per person (anchor='person', set person_id). Several people on the same thing (one hiring round, one customer) belong in ONE topic.\n3. `title`: the topic in the person's own words \u2014 'Acme', 'Founding designer hire' \u2014 never a category.\n4. `summary`: AT MOST TWO SENTENCES AND 220 CHARACTERS. Lead with what needs the person now, with the real date, amount or name; then the one thing they are waiting on, if any. Read timeline_events and the commitments' provenance so every word is true. Never use: loop, entity, record, evidence, thread, status, pending, action item, reply owed, awaiting reply, workstream, situation.\n5. `urgency` = the most urgent of its commitments; status='active'; last_seen_at=now. Update the existing row for an anchor rather than creating a second. Mark a topic whose commitments are all closed status='resolved'.\n\nThis is the first pass, run while the rest of the mail is still being read: do ONLY the topics above. Do not create workstreams or boards now, and do not read function source or survey the pod. Be quick: the person is watching an empty desk fill up."
+          }
+        }
+      },
+      "id": "topics",
+      "label": "Give the desk its first topics",
+      "position": null,
+      "type": "AGENT"
     },
     {
       "config": {
@@ -279,14 +327,44 @@
         "input_mapping": {
           "message": {
             "type": "literal",
+            "value": "First run has finished reading. Every message has now been read, a company at a time, by readers who worked side by side and could not see each other's companies. Go over what they left, once, against the whole history. Follow your writing rules in /memory/AGENTS.md. Do not read function source or survey the pod.\n\n1. List what is open: `select l.id, l.side, l.kind, l.obligation, l.provenance, l.opened_at, l.thread_ref, p.id as person_id, p.name, p.email, c.id as company_id, c.name as company, c.domain from loops l left join people p on p.id = l.person_id left join companies c on c.id = p.company_id where l.status = 'open' order by c.domain, p.email, l.opened_at`.\n2. Go company by company (person by person where there is no company). Read what happened AFTER each commitment was opened, in any conversation and any meeting, not only its own: `select occurred_at, kind, source, direction, subject, summary, body_ref from interactions where (participants::text ilike '%@<domain>%' or participants::text ilike '%<email>%' or subject ilike '%<first name>%' or summary ilike '%<first name>%' or summary ilike '%<company>%') and coalesce(triage,'') <> 'noise' order by occurred_at`. Meeting notes often carry no email address, which is why names are searched too. For a meeting note, read the note itself (`lemma files cat <body_ref>`), not only its summary: the detail that settles something is usually one line in it.\n3. CLOSE a commitment when something later shows it was done, answered, or overtaken. Overtaken counts: the thing promised has visibly moved on to its next stage (you owed a draft agreement and a later note says their lawyer is reviewing it; you owed a time and the meeting has since happened; you owed a group chat and a different one was agreed instead). Do not wait for a message that says 'done' in so many words. Set status='closed', closed_by='auto', closed_at=now, and close_reason beginning exactly 'Already dealt with: ' followed by one plain sentence naming what settled it and its date. Where two open rows are the same obligation worded twice, keep the clearer one and close the other with closed_by='superseded' and superseded_by set.\n4. Whenever you close or change a commitment, bring that person's and that company's `context` up to date in the same breath, so it no longer says the thing is owed. Their text must agree with what is open.\n5. Leave a commitment as it is only when nothing later touches it. Never close something only because it is old. Never reopen or edit anything the person closed themselves (closed_by='manual').\n\nDo not open new commitments here and do not send anything. Reply with two numbers only: closed, still open."
+          }
+        }
+      },
+      "id": "recon",
+      "label": "Check what was found against the whole history",
+      "position": null,
+      "type": "AGENT"
+    },
+    {
+      "config": {
+        "agent_name": "pod_default",
+        "input_mapping": {
+          "message": {
+            "type": "literal",
             "value": "Refresh the Feed's topics and the person's workstreams. Follow your writing rules in /memory/AGENTS.md exactly.\n\nFIRST \u2014 the person's notes. Read `corrections` where applied is not true. Each is the person telling you something you could not see (\"already made the WhatsApp group\", \"discussed on a call, not needed\", \"that summary is wrong\"). Act on each one now: reword or close the commitment it concerns (closed_by='manual', close_reason quoting their words, when they say it is done or not needed), fix the summary or workstream it is about, then set applied=true.\n\nTOPICS (`situations` table)\n1. Read every open row in `loops`, with its person, company and work_project.\n2. Group them. A commitment that belongs to a workstream joins that workstream's topic (anchor='workstream', set work_project_id). Otherwise group by what it is about \u2014 usually one per person (anchor='person', set person_id). Several people on the same thing (one hiring round, one customer) belong in ONE topic.\n3. `title`: the topic in the person's own words \u2014 'Acme', 'Founding designer hire' \u2014 never a category.\n4. `summary`: AT MOST TWO SENTENCES AND 220 CHARACTERS. Lead with what needs the person now, with the real date, amount or name; then the one thing they are waiting on, if any. Read timeline_events and the commitments' provenance so every word is true. Never use: loop, entity, record, evidence, thread, status, pending, action item, reply owed, awaiting reply, workstream, situation.\n5. `urgency` = the most urgent of its commitments; status='active'; last_seen_at=now. Update the existing row for an anchor rather than creating a second. Mark a topic whose commitments are all closed status='resolved'.\n\nWORKSTREAMS (`work_projects` table) \u2014 keep them true, and create the missing ones\n6. kind='account': any company with money or a signature in motion (an invoice, a contract, an LOI or pilot, a paid PoC) or with two or more real two-way conversations in the last three weeks and something still open. A paying customer ALWAYS has one. title = the company name; set company_id, kind='account', the sales track_id, cadence ('Customer', 'Pilot', 'Negotiating'), attendees (their emails). Never create one for a vendor pitching the person, a recruiter, or a cold sender.\n7. kind='meeting' for a recurring calendar series (derive cadence from actual dates, never the title, never from one occurrence); kind='hiring' for a hiring round; kind='project' for a finite delivery with a deadline. Never create two for the same thing \u2014 '[Imp] Daily Catchup' and 'Daily Catchup' are one.\n8. For every workstream: `stands` = at most two sentences / 240 characters of where it stands and what was promised; link each open commitment that belongs to it by setting loops.work_project_id. Archive (archived=true) a workstream with no activity for six weeks and nothing open.\n\nBOARDS (`tracks`, `stages`, `board_cards`) \u2014 keep every pipeline true to how this person actually works\n8a. Nobody starts with a board; one is created the first time a real pipeline exists. Run `select relationship, count(*) from people group by relationship` and `select slug, name from tracks`. For each kind of pipeline where THREE OR MORE people or companies are in the same process with the person right now (prospects being sold to, candidates for a role, investors being raised from, or anything else they run in steps) and no tracker covers it: create one with `lemma functions run create_tracker --data '{\"name\": \"\u2026\", \"subject\": \"person|company\", \"stages\": [{\"name\": \"\u2026\", \"definition\": \"\u2026\"}, \u2026, {\"name\": \"\u2026\", \"definition\": \"\u2026\", \"is_terminal\": true}]}'`, naming it and its three to six stages after how THIS person runs it as their mail shows, with one positive and one negative ending. Then put every one of those people or companies on it with `place_on_boards` (cards: track_slug, subject_type, person_email or company_domain, stage_name, reason). Fewer than three: no board. Never create one because a topic merely sounds like sales or hiring.\n9. For each track with cards, read the stage names and compare them with what the mail and meeting notes show this person really does. If the real process has a named step the board lacks (an assignment, a call with the founder, an LOI, a pilot), rename a generic stage to it or add it in order; if a stage has never been used and nothing in the mail suggests it, leave it \u2014 never delete a stage that holds cards. Keep exactly one positive and one negative ending. Keep each stage's `definition` true to its name: one plain sentence saying what evidence puts someone there (an ending needs a plain statement in a message \u2014 never \"set by a human\"). A stage renamed without its definition updated is wrong.\n10. Place each card by evidence, using the stage names as they are now: an invite with no reply stays at the first stage; \"I'll send the assignment\" is the assignment step; the person saying \"I'll send the offer letter\" is the offer step. Terminal stages need explicit evidence. Write `last_move_reason` as one short plain sentence with the date.\n11. One card per deal: a company that is the end client, paying entity or parent of a deal already on the board does not get its own card \u2014 note it in that card's reason instead.\n\nWrite with `lemma records create/update`. Report in one line: topics written/resolved, workstreams created/updated, boards changed."
           }
         }
       },
-      "id": "topics",
-      "label": "Group the first week into topics",
+      "id": "regroup",
+      "label": "Group everything into topics",
       "position": null,
       "type": "AGENT"
+    },
+    {
+      "config": {
+        "function_name": "catch_up_step",
+        "input_mapping": {
+          "reconciled": {
+            "type": "literal",
+            "value": true
+          }
+        }
+      },
+      "id": "wrap",
+      "label": "First run finished",
+      "position": null,
+      "type": "FUNCTION"
     },
     {
       "config": {},

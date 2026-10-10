@@ -15,6 +15,9 @@ a reading pass should start:
 
   * nothing waiting that a reader could take   -> no
   * a first-run import is in progress           -> no, unless asked for by hand
+  * first run is still collecting older weeks   -> no: a reader is handed a whole company,
+                                                   and the sorter must know everyone the
+                                                   person has written to before it judges
   * all reading slots are taken                 -> no (those readers take batch after batch)
   * otherwise                                   -> yes, and a slot is taken
 
@@ -35,7 +38,8 @@ from pydantic import BaseModel
 from lemma_sdk import FunctionContext, Pod
 
 MAX_READERS = 3
-SLOT_MIN = 15
+SLOT_MIN = 25
+COLLECT_WAIT_MIN = 10
 
 
 class GateInput(BaseModel):
@@ -49,6 +53,7 @@ class GateResult(BaseModel):
     slot: str = ""
     unread: int = 0
     draft: bool = False          # on `done`: something is newly owed and has no draft yet
+    group: bool = False          # on `done`, during first run: time to give the desk its first topics
     why: str = ""
 
 
@@ -93,6 +98,16 @@ async def reader_gate(ctx: FunctionContext, data: GateInput) -> GateResult:
             put("reading_slots", json.dumps(left))
         except Exception:
             pass
+        # Whatever this reader took and did not read is let go now, so the next reader has
+        # it at once. (Rows are held under the reader's name, which is its slot.)
+        if data.slot:
+            try:
+                safe = "".join(ch for ch in data.slot if ch.isalnum())[:40]
+                for r in rows("select id from interactions where extracted_at is null "
+                              f"and claimed_by = '{safe}' limit 200"):
+                    pod.records.update("interactions", r["id"], {"claimed_until": None, "claimed_by": None})
+            except Exception:
+                pass
         if not left:
             # The last reader has gone. Anything it took and did not finish (a reader can
             # be handed more than it gets through) is let go at once, so the next reader
@@ -103,6 +118,34 @@ async def reader_gate(ctx: FunctionContext, data: GateInput) -> GateResult:
                     pod.records.update("interactions", r["id"], {"claimed_until": None})
             except Exception:
                 pass
+        # First run keeps itself going. A reader that finishes while mail is still waiting
+        # starts the next reader, and the one that finishes with nothing left starts the
+        # step that declares first run finished. Without this, every step would wait for
+        # the app to be open, or for a timer that may tick only every fifteen minutes.
+        try:
+            cu = json.loads((setting("catchup") or {}).get("value") or "{}")
+            if cu and not cu.get("done"):
+                waiting = int((rows(
+                    "select count(*) as n from interactions where extracted_at is null "
+                    "and coalesce(triage, '') <> 'noise'")[0] or {}).get("n") or 0)
+                if waiting == 0 and cu.get("loaded"):
+                    pod.workflows.create_run("catch_up")
+                elif waiting > 0 and len(left) < MAX_READERS:
+                    pod.workflows.create_run("autopilot_loose_ends")
+        except Exception:
+            pass
+        # First run: the moment the first reader has found something, group it into topics
+        # so the desk has shape while the rest is still being read. Once.
+        try:
+            cu = json.loads((setting("catchup") or {}).get("value") or "{}")
+            if cu and not cu.get("done") and not (setting("catchup_grouped") or {}).get("value"):
+                found = int((rows("select count(*) as n from loops where status = 'open'")[0] or {}).get("n") or 0)
+                if found > 0:
+                    put("catchup_grouped", "1")
+                    res.group = True
+                    return res
+        except Exception:
+            pass
         try:
             owed = rows(
                 "select count(*) as n from loops l where l.status = 'open' and l.side = 'you' "
@@ -133,6 +176,16 @@ async def reader_gate(ctx: FunctionContext, data: GateInput) -> GateResult:
         return GateResult(why=f"could not count unread rows: {str(exc)[:120]}")
     if unread == 0:
         return GateResult(why="nothing waiting")
+
+    try:
+        cu = json.loads((setting("catchup") or {}).get("value") or "{}")
+        if cu and not cu.get("done") and not cu.get("loaded"):
+            began = _when(cu.get("started_at"))
+            # (a start with no time on it, or one long ago, is not waited for)
+            if began and now - began < timedelta(minutes=COLLECT_WAIT_MIN):
+                return GateResult(unread=unread, why="first run is still collecting older weeks")
+    except Exception:
+        pass
 
     try:
         if not data.ignore_import:

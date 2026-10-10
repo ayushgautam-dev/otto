@@ -52,6 +52,13 @@
         ],
         "resource_name": "sync_outlook",
         "resource_type": "function"
+      },
+      {
+        "permission_ids": [
+          "workflow.execute"
+        ],
+        "resource_name": "autopilot_loose_ends",
+        "resource_type": "workflow"
       }
     ]
   },

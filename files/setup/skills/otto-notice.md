@@ -404,7 +404,7 @@ person waits on an empty screen. Read a batch, write it, mark it, and only then 
 next one, so results appear as you go.
 
 ```
-lemma functions run pending_interactions --data '{"limit": 10}' --output json > batch.json
+lemma functions run pending_interactions --data '{"limit": 10, "reader": "<your reader name>"}' --output json > batch.json
 lemma functions run ingest_open_loops    --data @batch.json     --output json
 lemma functions run mark_extracted       --data @marked.json    --output json
 ```
@@ -449,19 +449,16 @@ them the same way and let `source` and `kind` tell you what you are looking at.
 1. **Call `pending_interactions` ONCE per batch**, saving what it returns to a file
    (`… --output json > batch.json`) and working from that file. Never call it a second
    time to look again: every call hands you NEW rows and holds them for you, so a second
-   call strands the first batch where no other reader can reach it. Use `{"limit": 10}`. You get back mail that has already
+   call strands the first batch where no other reader can reach it. Use `{"limit": 10, "reader": "<your reader name>"}`: your reader name is the `reader` value you were started with (if you were given none, make up one short word and use the same one for the whole run). Rows are held under that name. You get back mail that has already
    been sorted as worth reading, and that is now yours alone: other readers run beside
-   you, and nobody else will be handed these rows for the next few minutes. Each row has
+   you, and nobody else will be handed these rows, or any other mail from the same company, while you hold them. Each row has
    `id`, `kind`, `source`, `occurred_at`, `subject`, `direction` (`inbound` = to you,
    `outbound` = from you), `addressed_to_me`, `thread_ref`, `person_email` (the
    counterparty) and the **full `body`**. `remaining` tells you how much is still waiting.
 
-   **Read a conversation whole.** Rows come grouped by `thread_ref`, oldest first, and you
-   are given every waiting message from the same people. `earlier` lists what was said
-   before in those same conversations (one line each, from messages already read). Read
-   the thread as one thing from top to bottom before deciding anything: the last message
-   usually changes what the first one meant. One conversation produces at most the
-   obligations that are open at its END, not one per message.
+   A batch is everything waiting for one company (or a few small ones), and nobody else
+   is reading that company. `earlier` lists anything already read with these companies
+   and in these conversations, one line each.
 
    Write and mark each batch before taking the next (steps 8 and 9), so what you find
    reaches the person's desk straight away and your hold on the rows is released.

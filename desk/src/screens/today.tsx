@@ -12,7 +12,7 @@ import { useLem } from '../lem'
 import { Correctable } from '../correct'
 import { Board, boardSql, type BoardRow } from './board'
 import { WeatherMark } from '../weather'
-import { useCatching } from '../backfill'
+import { useCatching, useProgress, useFinishedSummary, type Progress } from '../backfill'
 import { useTeammate, tm } from '../teammate'
 import { useAccounts, accountLabel, resolveAccount } from '../accounts'
 
@@ -419,29 +419,58 @@ function ByCompany({ rows, myDomain, onChange, toPeople }: {
 /* The first minutes. The desk is open but nothing has been found yet, and a blank page
    with a spinner in the corner reads as broken. So show the work: how much was collected,
    how much of it has been read so far, and what has turned up, counted live. */
-function Reading({ teammate }: { teammate: string }) {
-  const [tick, setTick] = useState(0)
-  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 5000); return () => clearInterval(t) }, [])
-  const q = useSql<{ total: number; unread: number; people: number; loops: number }>(rev(
-    `select (select count(*) from interactions) as total,
-            (select count(*) from interactions where extracted_at is null) as unread,
-            (select count(*) from people) as people,
-            (select count(*) from loops where status='open') as loops`, tick))
-  const c = q.items[0]
-  const total = Number(c?.total ?? 0), unread = Number(c?.unread ?? 0)
-  const read = Math.max(0, total - unread)
-  const pct = total ? Math.round((read / total) * 100) : 0
+/* First run, made visible. Four numbers and a plain line that it is still going: enough to
+   show that what is on the desk is not yet everything. Big while the desk is empty, a
+   strip above the list once there is something to look at. */
+function Reading({ teammate, compact }: { teammate: string; compact?: boolean }) {
+  const n = useProgress()
+  const nums = (
+    <div className="reading-nums">
+      <div><b>{n?.emails ?? 0}</b><span>emails collected</span></div>
+      <div><b>{n?.people ?? 0}</b><span>people found</span></div>
+      <div><b>{n?.found ?? 0}</b><span>loose ends found</span></div>
+      <div><b>{n?.replies ?? 0}</b><span>replies prepared</span></div>
+    </div>
+  )
+  if (compact) return (
+    <div className="reading-strip" role="status">
+      <div className="reading-strip-h">
+        <i className="reading-dot" aria-hidden="true" />
+        <b>{teammate} is still reading.</b>
+        <span>More will appear, and some of this may change.</span>
+      </div>
+      <dl className="reading-row">
+        <div><dt>emails collected</dt><dd>{n?.emails ?? 0}</dd></div>
+        <div><dt>people found</dt><dd>{n?.people ?? 0}</dd></div>
+        <div><dt>loose ends found</dt><dd>{n?.found ?? 0}</dd></div>
+        <div><dt>replies prepared</dt><dd>{n?.replies ?? 0}</dd></div>
+      </dl>
+    </div>
+  )
   return (
     <div className="reading" role="status">
       <Orb live size={44} />
       <div className="display sm">{teammate} is reading your mail.</div>
-      <p className="lede">The first loose ends usually appear within five minutes. You can leave this open or come back.</p>
-      <div className="reading-bar" aria-label={`${pct}% read`}><i style={{ width: `${Math.max(pct, total ? 4 : 0)}%` }} /></div>
-      <div className="reading-nums">
-        <div><b>{total}</b><span>collected</span></div>
-        <div><b>{read}</b><span>read so far</span></div>
-        <div><b>{Number(c?.people ?? 0)}</b><span>people found</span></div>
-        <div><b>{Number(c?.loops ?? 0)}</b><span>loose ends</span></div>
+      <p className="lede">The first loose ends usually appear within a few minutes. You can leave this open or come back.</p>
+      <div className="reading-bar" aria-hidden="true"><i className="going" /></div>
+      {nums}
+    </div>
+  )
+}
+
+/* And once, when it has finished: what was done. */
+function Finished({ teammate, n, onClose }: { teammate: string; n: Progress; onClose: () => void }) {
+  const open = Math.max(0, n.found - n.dealt)
+  return (
+    <div className="reading-strip done" role="status">
+      <div className="reading-strip-h">
+        <b>{teammate} has caught up.</b>
+        <span>
+          Went through {n.emails} emails{n.noise > 0 ? `, set aside ${n.noise} as noise` : ''}, found {n.people} people
+          and {n.found} loose ends{n.dealt > 0 ? `; ${n.dealt} had already been dealt with, so ${open} are open` : ''}
+          {n.replies > 0 ? `. ${n.replies} replies are prepared for you` : ''}.
+        </span>
+        <button className="reading-x" onClick={onClose} aria-label="Dismiss">Got it</button>
       </div>
     </div>
   )
@@ -450,6 +479,7 @@ function Reading({ teammate }: { teammate: string }) {
 export function Today({ userName }: { userName: string }) {
   const { version, bump } = useNav()
   const catching = useCatching()
+  const finished = useFinishedSummary(catching)
   const teammate = useTeammate()
   const { user } = useCurrentUser({ client })
   const myDomain = (((user as { email?: string } | undefined)?.email ?? '').split('@')[1] ?? '').toLowerCase()
@@ -536,6 +566,9 @@ export function Today({ userName }: { userName: string }) {
           </span>
         </div>
       )}
+
+      {finished && <Finished teammate={teammate} n={finished.numbers} onClose={finished.dismiss} />}
+      {catching && !loading && all.length > 0 && <Reading teammate={teammate} compact />}
 
       {filter !== 'them' && <ReadyShelf />}
 

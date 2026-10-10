@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { X, Plus, Download, Copy, ExternalLink, FileText, CalendarPlus, Send, Check, Video, Clock } from 'lucide-react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { useSql, records, runFn, rev, lit, isGmailThread, isOutlookThread } from './lib'
+import { useSql, records, runFn, rev, lit, isGmailThread, isOutlookThread, client } from './lib'
 import { useAccounts, useThreadAccount, accountLabel } from './accounts'
 import { Avatar, Markdown, Orb, useToast } from './ui'
 import { useNav } from './nav'
@@ -38,6 +38,9 @@ export interface DocRow {
   title: string
   body?: string | null
   doc_url?: string | null
+  /** where the rendered file is, when the document was made as one (a PDF) */
+  file_path?: string | null
+  format?: string | null
   status?: string | null
   created_at?: string | null
   loop_id?: string | null
@@ -207,6 +210,23 @@ async function closeAfterSend(d: DraftRow, how: string) {
 
 /* ---------------- a letter ---------------- */
 
+/** A document that was rendered to a file (an invoice as a PDF) opens as that file. */
+async function openFile(path: string, toast: (m: string) => void) {
+  const win = window.open('', '_blank')
+  try {
+    const blob = await (client as unknown as { files: { download: (p: string) => Promise<Blob> } }).files.download(path)
+    const url = URL.createObjectURL(blob)
+    if (win) win.location.href = url
+    else { const a = document.createElement('a'); a.href = url; a.download = path.split('/').pop() || 'document'; a.click() }
+  } catch {
+    win?.close()
+    toast('Could not open the file')
+  }
+}
+/** Sending a rendered file as a real attachment is built but not switched on: it has not been tried with a real send. */
+const FILE_ATTACHMENTS = false
+const fileOf = (d: DocRow) => (FILE_ATTACHMENTS && typeof d.file_path === 'string' && d.file_path.startsWith('/') ? d.file_path : '')
+
 function docAsHtml(d: DocRow): string {
   const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;')
   const inner = renderToStaticMarkup(<Markdown text={d.body ?? ''} />)
@@ -250,13 +270,17 @@ export function Letter({ draft, onSent, docs = [] }: { draft: DraftRow; onSent?:
 
   async function reallySend() {
     setState('sending')
+    const filed = docs.find((d) => attach.includes(d.id) && fileOf(d))
     try {
       const out = await runFn<{ sent?: boolean; error?: string; mode?: string }>('send_draft', {
         draft_id: draft.id, subject, body,
         to_email: to[0], extra_to: to.slice(1), cc, thread_ref: draft.thread_ref ?? '',
         to_name: draft.person ?? '',
         account_id: from?.id ?? null, provider: from?.provider ?? null,
-        appendix_html: docs.filter((d) => attach.includes(d.id)).map(docAsHtml).join('<hr style="margin:24px 0">') || null,
+        // the first document that exists as a file goes as a real attachment; any others,
+        // and documents that are only text, are written into the email
+        attachment_path: filed ? fileOf(filed) : null,
+        appendix_html: docs.filter((d) => attach.includes(d.id) && d.id !== filed?.id).map(docAsHtml).join('<hr style="margin:24px 0">') || null,
       })
       if (!out?.sent) {
         setState('idle')
@@ -490,6 +514,11 @@ export function Paper({ doc, reader }: { doc: DocRow; reader?: boolean }) {
 
   const tools = (
     <div className="paper-tools">
+      {fileOf(doc) && (
+        <button className="btn line sm" onClick={() => void openFile(fileOf(doc), toast)}>
+          <FileText size={12} /> Open {(doc.format || 'file').toUpperCase() === 'PDF' ? 'PDF' : 'file'}
+        </button>
+      )}
       <button className="btn line sm" disabled={busy} onClick={() => void toGoogle()}>
         <ExternalLink size={12} /> {busy ? 'Opening…' : 'Google Docs'}
       </button>
@@ -579,7 +608,7 @@ export function WorkChip({ kind, id }: { kind: 'draft' | 'doc'; id: string }) {
 export function useDocsForLoop(loopId: string | null) {
   const { version } = useNav()
   return useSql<DocRow>(rev(loopId
-    ? `select id, title, body, doc_url, status, created_at, loop_id from deliverables
+    ? `select id, title, body, doc_url, file_path, format, status, created_at, loop_id from deliverables
        where loop_id=${lit(loopId)} and status <> 'discarded' order by created_at desc limit 3`
     : null, version))
 }
