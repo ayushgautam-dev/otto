@@ -26,6 +26,7 @@ LATE, LATE_BG = "#a4372b", "#fbecea"
 # No quoted family names: every style below sits inside a single-quoted attribute.
 SANS = "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif"
 SERIF = "Georgia,Times New Roman,serif"
+ESCAPE_OPEN, ESCAPE_CLOSE = "</div>", "<div>"
 
 
 class Item(BaseModel):
@@ -193,10 +194,14 @@ async def render_brief(ctx: FunctionContext, data: RenderBriefInput) -> RenderBr
         f"anything above: &ldquo;send the first draft&rdquo;, &ldquo;move the 3pm to tomorrow&rdquo;. "
         f"Nothing else will interrupt you today.</td></tr></table></td></tr>")
 
+    # The assistant's own address wraps whatever it is given in a 640px box pinned to the
+    # left, which leaves the background cut off and the card off-centre. Closing that box
+    # first and reopening an empty one after lets the background run the full width with
+    # the card centred, and keeps the markup balanced.
     res.html = (
-        f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
+        f"{ESCAPE_OPEN}<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
         f"style='background:{PAPER}'><tr><td align='center' style='padding:24px 10px'>"
         f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
         f"style='max-width:600px;background:{CARD};border:1px solid {LINE};border-radius:14px;text-align:left'>"
-        + "".join(body) + "</table></td></tr></table>")
+        + "".join(body) + f"</table></td></tr></table>{ESCAPE_CLOSE}")
     return res

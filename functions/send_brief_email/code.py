@@ -139,14 +139,14 @@ async def send_brief_email(ctx: FunctionContext, data: SendBriefInput) -> SendBr
     try:
         if use_outlook:
             pod.connectors.execute("outlook", "OUTLOOK_SEND_EMAIL", {
-                "to": me, "subject": res.subject, "body": (data.html.strip() or _md_to_html(body)),
+                "to": me, "subject": res.subject, "body": (_own_html(data.html) or _md_to_html(body)),
                 "is_html": True, "user_id": "me",
             }, **use)
         else:
             pod.connectors.execute("gmail", "GMAIL_SEND_EMAIL", {
                 "recipient_email": me,
                 "subject": res.subject,
-                "body": (data.html.strip() or _md_to_html(body)),
+                "body": (_own_html(data.html) or _md_to_html(body)),
                 "is_html": True,
             }, **use)
         res.sent, res.via = True, "mailbox"
@@ -157,6 +157,16 @@ async def send_brief_email(ctx: FunctionContext, data: SendBriefInput) -> SendBr
         return res
 
     return _logged(pod, res, me, today)
+
+
+def _own_html(text: str) -> str:
+    """The designed email, without the wrapper escape that only Otto's address needs."""
+    t = (text or "").strip()
+    if t.startswith("</div>"):
+        t = t[len("</div>"):]
+    if t.endswith("<div>"):
+        t = t[:-len("<div>")]
+    return t.strip()
 
 
 def _logged(pod, res: SendBriefResult, me: str, today: str) -> SendBriefResult:
