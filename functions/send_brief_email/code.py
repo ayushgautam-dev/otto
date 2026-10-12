@@ -9,6 +9,13 @@
 # this can ever send to is the founder's own — the recipient is taken from the run's
 # identity and cannot be passed in. It cannot message a third party even by mistake.
 #
+# The brief normally goes from Otto's own address, so that a reply lands with Otto and
+# gets acted on; a brief sent from the person to themselves is a dead end, with nothing
+# listening on the other side of Reply. Only Otto can send as Otto (it is a tool the
+# assistant holds, and not something a function can be granted), so Otto sends it and
+# calls this with delivered_by_otto to record that it went. This function's own send,
+# through the person's mailbox, is the fallback for when Otto's address cannot reach them.
+#
 # One message a day. That is the whole notification design: the promise is fewer
 # interruptions, not more.
 
@@ -24,6 +31,13 @@ class SendBriefInput(BaseModel):
     # schedule firing cannot produce two emails.
     force: bool = False
     subject_prefix: str = "Your brief"
+    # The whole subject line, written by whoever composed the brief so it can say what is
+    # inside ("Mon 12 Oct: 3 meetings, 2 overdue, 1 draft waiting") in the person's own
+    # date. Empty falls back to the prefix and today's date.
+    subject: str = ""
+    # True when Otto has already emailed today's brief from its own address. Nothing is
+    # sent; the run is only recorded.
+    delivered_by_otto: bool = False
 
 
 class SendBriefResult(BaseModel):
@@ -31,6 +45,7 @@ class SendBriefResult(BaseModel):
     to: str = ""
     subject: str = ""
     reason: str = ""
+    via: str = ""          # "otto" (Otto's own address, replies reach Otto) or "mailbox"
     errors: list[str] = Field(default_factory=list)
 
 
@@ -91,7 +106,13 @@ async def send_brief_email(ctx: FunctionContext, data: SendBriefInput) -> SendBr
         return res
 
     body = brief["content"].strip()
-    res.subject = f"{data.subject_prefix} — {datetime.now(timezone.utc).strftime('%a %d %b')}"
+    res.subject = " ".join((data.subject or "").split())[:200] or (
+        f"{data.subject_prefix} — {datetime.now(timezone.utc).strftime('%a %d %b')}")
+
+    # Otto already sent it from its own address: nothing to send, only the audit line.
+    if data.delivered_by_otto:
+        res.sent, res.via, res.reason = True, "otto", "sent"
+        return _logged(pod, res, me, today)
 
     # From the person's primary mailbox when they chose one (settings.primary_mail_account
     # holds "gmail:<account id>" or "outlook:<account id>"); otherwise whichever mailbox
@@ -125,13 +146,17 @@ async def send_brief_email(ctx: FunctionContext, data: SendBriefInput) -> SendBr
                 "body": _md_to_html(body),
                 "is_html": True,
             }, **use)
-        res.sent = True
+        res.sent, res.via = True, "mailbox"
         res.reason = "sent"
     except Exception as exc:
         res.errors.append(str(exc)[:250])
         res.reason = "send failed"
         return res
 
+    return _logged(pod, res, me, today)
+
+
+def _logged(pod, res: SendBriefResult, me: str, today: str) -> SendBriefResult:
     try:
         pod.records.create("activity_events", {
             "icon": "mail",
@@ -141,5 +166,4 @@ async def send_brief_email(ctx: FunctionContext, data: SendBriefInput) -> SendBr
         })
     except Exception:
         pass          # the mail went; a missing audit line must not fail the run
-
     return res

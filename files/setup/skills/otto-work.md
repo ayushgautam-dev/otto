@@ -47,6 +47,8 @@ actually answer it, and produce that.
   professional would send it" in the otto-write skill: choose its `format`, keep
   `doc_url` for real web links only, and keep every trace of this workspace out of the
   document itself.
+- An invoice, letter, proposal or agreement is never written from scratch: follow "A
+  formal document follows the last one like it" in the otto-write skill first.
 - Attach it to the person or company it concerns when there is an obvious one, so it
   appears on their record.
 - Then say **one line** in chat: what it is and that it is ready. Never paste the whole

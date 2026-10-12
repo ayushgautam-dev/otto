@@ -18,6 +18,7 @@ import { Autopilots } from './screens/autopilots'
 import { FirstRun, needsFirstRun } from './screens/firstrun'
 import { CloneGate } from './gate'
 import { ensureMyAutopilots, ensureSkills } from './autopilot-sync'
+import { ensureOttoMail } from './ottomail'
 import { useTeammate, useTeammateFace, DEFAULT_TEAMMATE } from './teammate'
 import { useCatchUp, CatchUpCtx, type CatchUp, useFreshCalendar } from './backfill'
 import { useNewAccountCatchUp, useAccounts } from './accounts'
@@ -127,7 +128,7 @@ function Shell({ name, email }: { name: string; email: string }) {
   else screen = <Feed userName={name} />
   // anyone missing their own copy of a default autopilot gets it quietly; anything they
   // switched off stays off
-  useEffect(() => { void ensureSkills().catch(() => 0); void ensureMyAutopilots().catch(() => 0) }, [])
+  useEffect(() => { void ensureSkills().catch(() => 0); void ensureMyAutopilots().catch(() => 0); void ensureOttoMail().catch(() => null) }, [])
   // older history keeps loading in the pod; this only watches it and refreshes the pages
   const { bump } = useNav()
   const catching = useCatchUp(bump)

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ArrowRight } from 'lucide-react'
 import { runFn, sql } from '../lib'
 import { SourceMark } from '../brand'
@@ -6,7 +6,7 @@ import { Orb } from '../ui'
 import { ensureMyAutopilots, ensureSkills, loadCatalog, type CatalogEntry } from '../autopilot-sync'
 import { quickStart, putSetting, unreadCount } from '../backfill'
 import { useTeammateFace, useRenameTeammate } from '../teammate'
-import { readWhatsApp, setUpWhatsApp, whatsAppLink, lastFour, type WhatsApp } from '../whatsapp'
+import { readWhatsApp, setUpWhatsApp, whatsAppLink, whatsAppWebLink, firstMessage, qrPath, lastFour, type WhatsApp } from '../whatsapp'
 
 /* First run.
    Nobody should meet an empty product, and nobody should have to read to get in.
@@ -63,8 +63,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const WORK = ['Sales', 'Customer success', 'Hiring', 'Product', 'Engineering', 'Marketing',
   'Finance', 'Operations', 'Partnerships', 'Fundraising', 'Legal', 'Support']
 
-/** The WhatsApp card is built but not switched on yet: turning it on has not been tried end to end. */
-const WHATSAPP_CARD = false
+/** The WhatsApp card: a QR code and a link to the number that answers. Off here hides it for everyone. */
+const WHATSAPP_CARD = true
+
+/** On a phone the link opens the WhatsApp app; on a computer it opens WhatsApp on the web. */
+const ON_PHONE = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 
 const STAGES = ['mail', 'calendar'] as const
 
@@ -99,23 +102,29 @@ export function FirstRun({ name, onDone }: { name: string; onDone: () => void })
      it, so the minute it takes is spent on something useful and not on a progress bar. */
   const [finished, setFinished] = useState(false)
   const [wa, setWa] = useState<WhatsApp | null>(null)
-  const [waNumber, setWaNumber] = useState('')
-  const [waBusy, setWaBusy] = useState(false)
-  const [waReady, setWaReady] = useState(false)
   const [waNote, setWaNote] = useState('')
   useEffect(() => { if (WHATSAPP_CARD) void readWhatsApp().then(setWa) }, [])
   const afterWhatsApp = () => setStep(finished ? 'done' : 'working')
-  const connectWhatsApp = async () => {
-    setWaBusy(true); setWaNote('')
+  /* The person never types a number here. Reaching the card is what gives the pod its
+     WhatsApp line; who they are is settled on WhatsApp itself, by profile number or by email. */
+  const prepareWhatsApp = useCallback(async () => {
+    setWaNote('')
     try {
-      const out = await setUpWhatsApp(wa?.mine ? undefined : waNumber)
+      const out = await setUpWhatsApp()
       setWa(out)
-      if (out.handle) setWaReady(true)
-      else setWaNote('WhatsApp is not available in this workspace yet. You can add it later.')
+      if (!out.handle) setWaNote('WhatsApp is not available in this workspace yet.')
     } catch {
-      setWaNote('That did not go through. You can add WhatsApp later from your profile.')
-    } finally { setWaBusy(false) }
-  }
+      setWaNote('WhatsApp could not be set up just now.')
+    }
+  }, [])
+  const waAsked = useRef(false)
+  useEffect(() => {
+    if (step !== 'whatsapp' || waAsked.current) return
+    waAsked.current = true
+    void prepareWhatsApp()
+  }, [step, prepareWhatsApp])
+  const waText = firstMessage(teammate)
+  const waQr = useMemo(() => (wa?.handle ? qrPath(whatsAppLink(wa.handle, waText)) : null), [wa?.handle, waText])
 
   const isOn = (s: Source) => Boolean(s.connected || s.status === 'connected')
 
@@ -316,33 +325,37 @@ export function FirstRun({ name, onDone }: { name: string; onDone: () => void })
 
         {step === 'whatsapp' && (
           <>
-            <h1>{waReady ? 'WhatsApp is on.' : `Talk to ${teammate} on WhatsApp.`}</h1>
-            {waReady && wa?.handle ? (
+            <h1>Talk to {teammate} on WhatsApp.</h1>
+            {wa?.handle && waQr ? (
               <>
-                <p className="fr-sub">Message <b>{wa.handle}</b> from your phone. Say hi.</p>
-                <div className="btn-row">
-                  <a className="btn primary lg" href={whatsAppLink(wa.handle)} target="_blank" rel="noreferrer">Open WhatsApp</a>
-                  <button className="btn lg" onClick={afterWhatsApp}>Continue <ArrowRight size={15} strokeWidth={2} /></button>
+                <p className="fr-sub">{wa.mine
+                  ? `Scan the code and send the message. Your number ending ${lastFour(wa.mine)} is already linked.`
+                  : 'Scan the code and send the message. The first time, it asks for your email and a code we send there.'}</p>
+                <div className="fr-wa">
+                  <svg className="fr-qr" viewBox={`0 0 ${waQr.size} ${waQr.size}`} role="img"
+                    aria-label={`QR code that opens a WhatsApp chat with ${wa.handle}`} shapeRendering="crispEdges">
+                    <rect width={waQr.size} height={waQr.size} fill="#fff" />
+                    <path d={waQr.d} fill="#111" />
+                  </svg>
+                  <div className="fr-wa-side">
+                    <span className="fr-wa-label">Or message</span>
+                    <b className="fr-wa-number">{wa.handle}</b>
+                    <span className="fr-wa-msg">“{waText}”</span>
+                    <a className="btn line" target="_blank" rel="noreferrer"
+                      href={ON_PHONE ? whatsAppLink(wa.handle, waText) : whatsAppWebLink(wa.handle, waText)}>
+                      {ON_PHONE ? 'Open WhatsApp' : 'Open WhatsApp on the web'}
+                    </a>
+                  </div>
                 </div>
               </>
             ) : (
-              <>
-                <p className="fr-sub">{wa?.mine
-                  ? `Ask and get nudged from your phone. We will use your number ending ${lastFour(wa.mine)}.`
-                  : 'Ask and get nudged from your phone. Add the number you use on WhatsApp.'}</p>
-                {!wa?.mine && (
-                  <input className="fr-input" type="tel" inputMode="tel" autoComplete="tel" placeholder="+1 555 010 0199"
-                    aria-label="Your WhatsApp number, with country code" value={waNumber}
-                    onChange={(e) => setWaNumber(e.target.value)} />
-                )}
-                {waNote && <p className="fr-note">{waNote}</p>}
-                <div className="btn-row">
-                  <button className="btn primary lg" disabled={waBusy || (!wa?.mine && waNumber.replace(/\D/g, '').length < 8)}
-                    onClick={() => void connectWhatsApp()}>{waBusy ? 'Setting up…' : 'Turn on WhatsApp'}</button>
-                  <button className="btn lg" onClick={afterWhatsApp}>Not now</button>
-                </div>
-              </>
+              <p className="fr-sub">{waNote || 'Getting your code…'}</p>
             )}
+            <div className="btn-row">
+              <button className="btn primary lg" onClick={afterWhatsApp}>
+                {wa?.handle ? 'Continue' : 'Skip'} <ArrowRight size={15} strokeWidth={2} />
+              </button>
+            </div>
           </>
         )}
 

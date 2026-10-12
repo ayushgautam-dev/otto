@@ -1,0 +1,29 @@
+{
+  "code": {
+    "$file": "code.py"
+  },
+  "config": null,
+  "description": "Finds documents the person has already sent (invoices, offer letters, proposals, agreements) in their sent mail and files a copy under /me/reference/ so a new one can follow the same format. Looks for the same recipient first, then their company, then the same kind of document sent to anyone. Read-only on the mailbox.",
+  "icon_url": null,
+  "name": "find_past_documents",
+  "permissions": {
+    "grants": [
+      {
+        "permission_ids": [
+          "connector.use"
+        ],
+        "resource_name": "outlook",
+        "resource_type": "connector"
+      },
+      {
+        "permission_ids": [
+          "connector.use"
+        ],
+        "resource_name": "gmail",
+        "resource_type": "connector"
+      }
+    ]
+  },
+  "type": "API",
+  "visibility": "POD"
+}

@@ -20,6 +20,7 @@ import { FirstRun, needsFirstRun } from './screens/firstrun'
 import { CloneGate } from './gate'
 import { Profile } from './profile'
 import { ensureMyAutopilots, ensureSkills } from './autopilot-sync'
+import { ensureOttoMail } from './ottomail'
 import { useCatchUp, CatchUpCtx, type CatchUp, useFreshCalendar } from './backfill'
 import { useTeammate, useTeammateFace, tm, DEFAULT_TEAMMATE } from './teammate'
 import { useNewAccountCatchUp, useAccounts } from './accounts'
@@ -114,7 +115,7 @@ function Shell({ name, email }: { name: string; email: string }) {
   useEffect(() => { document.querySelector('.main-scroll')?.scrollTo({ top: 0 }) }, [route])
   // anyone missing their own copy of a default autopilot (a teammate who joined before the
   // menu existed, say) gets it quietly; anything they switched off stays off
-  useEffect(() => { void ensureSkills().catch(() => 0); void ensureMyAutopilots().catch(() => 0) }, [])
+  useEffect(() => { void ensureSkills().catch(() => 0); void ensureMyAutopilots().catch(() => 0); void ensureOttoMail().catch(() => null) }, [])
 
   return (
     <div className="shell">

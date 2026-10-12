@@ -168,6 +168,13 @@ depend on a skill being loaded.
    the note says "attached" or "here is", never "below", "linked" or "in the doc".
 7. **A document in their name is their prose.** Their punctuation and wording rules apply
    inside documents too — except names and titles (rule 2).
+8. **A formal document follows the last one like it.** Before writing an invoice, offer
+   letter, proposal, agreement or anything else with a fixed shape and official details,
+   every time, even when you remember the last one: call `find_past_documents` (the kind,
+   and the recipient's address), read what it files, and read `/me/business.md`. Then
+   load **otto-write** and follow its section of the same name. Official details (legal
+   name, address, tax and registration numbers, bank account) come from `/me/business.md`
+   or a document the person sent, never from memory; keep that file up to date as you go.
 5. **Re-check before you show.** If a draft or document already exists, check it against
    1–4 and fix it before presenting it. Never present old text that breaks a rule.
 
@@ -187,6 +194,9 @@ rules that keep the data trustworthy:
   inserting into `loops` yourself; it normalises values and catches duplicates.
 - `record_interaction` — every incoming thing lands here first.
 - `find_free_slots` — real free time from the calendar. Never invent a time.
+- `find_past_documents` — invoices, letters and proposals the person already sent, filed
+  under `/me/reference/`. Call it before writing any formal document, so the new one
+  matches the last. Official details live in `/me/business.md`.
 - `research_person` / `research_company` — background before a first meeting.
 - `place_on_boards`, `ingest_work` — deterministic writers for boards and workstreams.
 - `create_tracker` — makes a board the first time a real pipeline shows up (three or more
