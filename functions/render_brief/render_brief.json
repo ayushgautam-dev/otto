@@ -1,0 +1,14 @@
+{
+  "code": {
+    "$file": "code.py"
+  },
+  "config": null,
+  "description": "Lays out the morning brief as a designed HTML email from its facts (meetings, what needs the person today, drafts ready, what is waiting, overdue). Reads nothing and sends nothing: it only returns the HTML and a one-line summary for the subject.",
+  "icon_url": null,
+  "name": "render_brief",
+  "permissions": {
+    "grants": []
+  },
+  "type": "API",
+  "visibility": "POD"
+}

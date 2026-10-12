@@ -194,6 +194,8 @@ rules that keep the data trustworthy:
   inserting into `loops` yourself; it normalises values and catches duplicates.
 - `record_interaction` — every incoming thing lands here first.
 - `find_free_slots` — real free time from the calendar. Never invent a time.
+- `render_brief` — lays the morning brief out as its email. You give it the facts; it
+  returns the HTML. Never write the brief's HTML yourself.
 - `find_past_documents` — invoices, letters and proposals the person already sent, filed
   under `/me/reference/`. Call it before writing any formal document, so the new one
   matches the last. Official details live in `/me/business.md`.

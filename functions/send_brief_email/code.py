@@ -38,6 +38,9 @@ class SendBriefInput(BaseModel):
     # True when Otto has already emailed today's brief from its own address. Nothing is
     # sent; the run is only recorded.
     delivered_by_otto: bool = False
+    # The designed email from render_brief. When given, the mailbox fallback sends this
+    # rather than a plain rendering of the stored text, so both routes look the same.
+    html: str = ""
 
 
 class SendBriefResult(BaseModel):
@@ -136,14 +139,14 @@ async def send_brief_email(ctx: FunctionContext, data: SendBriefInput) -> SendBr
     try:
         if use_outlook:
             pod.connectors.execute("outlook", "OUTLOOK_SEND_EMAIL", {
-                "to": me, "subject": res.subject, "body": _md_to_html(body),
+                "to": me, "subject": res.subject, "body": (data.html.strip() or _md_to_html(body)),
                 "is_html": True, "user_id": "me",
             }, **use)
         else:
             pod.connectors.execute("gmail", "GMAIL_SEND_EMAIL", {
                 "recipient_email": me,
                 "subject": res.subject,
-                "body": _md_to_html(body),
+                "body": (data.html.strip() or _md_to_html(body)),
                 "is_html": True,
             }, **use)
         res.sent, res.via = True, "mailbox"
