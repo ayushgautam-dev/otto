@@ -87,6 +87,14 @@
         ],
         "resource_name": "tasks",
         "resource_type": "datastore_table"
+      },
+      {
+        "permission_ids": [
+          "datastore.record.read",
+          "datastore.table.read"
+        ],
+        "resource_name": "situations",
+        "resource_type": "datastore_table"
       }
     ]
   },

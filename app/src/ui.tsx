@@ -110,7 +110,7 @@ export function Loading() {
    like raw markdown leaking into the page. */
 function inline(text: string, keyBase: string): ReactNode[] {
   const out: ReactNode[] = []
-  const re = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g
+  const re = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[[^\]]+\]\((?:[^()\s]|\([^()\s]*\))+\))/g
   let last = 0
   let m: RegExpExecArray | null
   let i = 0
@@ -121,7 +121,7 @@ function inline(text: string, keyBase: string): ReactNode[] {
     if (tok.startsWith('**')) out.push(<strong key={k}>{tok.slice(2, -2)}</strong>)
     else if (tok.startsWith('`')) out.push(<code key={k}>{tok.slice(1, -1)}</code>)
     else if (tok.startsWith('[')) {
-      const mm = /\[([^\]]+)\]\(([^)]+)\)/.exec(tok)!
+      const mm = /\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/.exec(tok)!
       out.push(<a key={k} href={mm[2]} target="_blank" rel="noreferrer">{mm[1]}</a>)
     } else out.push(<em key={k}>{tok.slice(1, -1)}</em>)
     last = m.index + tok.length

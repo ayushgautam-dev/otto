@@ -1,7 +1,7 @@
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { Plus, ChevronDown, X } from 'lucide-react'
 import { Chat, type ChatScope } from './chat'
-import { useSql, rev, ageLabel, lit } from './lib'
+import { useSql, sql, rev, ageLabel, lit } from './lib'
 import { useNav, type SheetTarget } from './nav'
 
 import { tm } from './teammate'
@@ -20,6 +20,33 @@ export const HOME: ChatScope = {
   key: 'home',
   about: 'the whole workspace — their people, commitments and workstreams',
   title: '',
+}
+
+/* The main conversation is a day's conversation, not one that runs for ever (the same
+   rule as the desk app). It used to live under the single key "home", so whatever
+   somebody typed on day thirty was appended to the first chat they ever had. Each day
+   now starts a fresh one; earlier days stay in the list under their first line. What Lem
+   knows about the person lives in the pod, not in the chat, so nothing is lost.
+   Conversations opened from an item, a person or a company keep their own key. */
+const pad = (n: number) => String(n).padStart(2, '0')
+const dayKey = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+const todaysHome = (): ChatScope => ({ ...HOME, key: `home:${dayKey()}` })
+const isHome = (key?: string) => !!key && (key === 'home' || key.startsWith('home:'))
+const CARRY_ON_MS = 2 * 3600_000   // a chat that crosses midnight is not cut in two
+
+async function currentHome(): Promise<ChatScope> {
+  try {
+    const rows = await sql<{ scope_key: string; title: string; last_used_at: string }>(
+      `select scope_key, coalesce(title,'') as title, last_used_at from chat_threads
+       where scope_key = 'home' or scope_key like 'home:%'
+       order by last_used_at desc nulls last limit 1`)
+    const t = rows[0]
+    if (t?.last_used_at) {
+      const at = new Date(t.last_used_at)
+      if (dayKey(at) === dayKey() || Date.now() - at.getTime() < CARRY_ON_MS) return { ...HOME, key: t.scope_key, title: t.title }
+    }
+  } catch { /* no bookmark to read: start today's */ }
+  return todaysHome()
 }
 
 interface ThreadRow { scope_key: string; title: string; last_used_at: string; [k: string]: unknown }
@@ -68,12 +95,14 @@ function useContextTab() {
       : t.type === 'company' ? `select name as label from companies where id=${lit(t.id)}`
         : t.type === 'doc' ? `select title as label from deliverables where id=${lit(t.id)}`
           : t.type === 'workstream' ? `select title as label from work_projects where id=${lit(t.id)}`
-            : `select obligation as label from loops where id=${lit(t.id)}`
+            : t.type === 'meeting' ? `select subject as label from interactions where id=${lit(t.id)}`
+              : `select obligation as label from loops where id=${lit(t.id)}`
     : null)
   if (!t) return null
   const label = q.items[0]?.label ?? ''
   const what = t.type === 'loop' ? `the commitment "${label}" (loop_id ${t.id})`
     : t.type === 'doc' ? `the document "${label}" (deliverables id ${t.id})`
+      : t.type === 'meeting' ? `their meeting "${label}" (calendar row ${t.id} in interactions)`
       : `${label} (${t.type}_id ${t.id})`
   return { key: `${t.type}:${t.id}`, label, what }
 }
@@ -86,7 +115,7 @@ export function LemPane({ tab }: { tab: Extract<SheetTarget, { type: 'lem' }> })
   const useCtx = ctx && ctx.label && dropped !== ctx.key
   const base = tab.about ?? HOME.about
   const scope: ChatScope = {
-    key: tab.key ?? HOME.key, title: tab.title ?? HOME.title,
+    key: tab.key ?? todaysHome().key, title: tab.title ?? HOME.title,
     about: useCtx ? `${base}. Right now they have ${ctx!.what} open in their workspace — assume questions are about it unless they say otherwise.` : base,
   }
   const pick = (s: ChatScope) => { setListOpen(false); openSheet({ type: 'lem', key: s.key, title: s.title, about: s.about }) }
@@ -122,20 +151,31 @@ export function AskLemProvider({ children }: { children: ReactNode }) {
   const { openSheet, closeTab, tabs } = useNav()
   const isOpen = tabs.some((t) => t.type === 'lem')
 
+  // today's main conversation, re-checked when the person comes back to the tab
+  const main = useRef<ChatScope>(todaysHome())
+  useEffect(() => {
+    const look = () => { if (!document.hidden) void currentHome().then((s) => { main.current = s }) }
+    look()
+    document.addEventListener('visibilitychange', look)
+    return () => document.removeEventListener('visibilitychange', look)
+  }, [])
+
   const ask = useCallback<Ask>((seed, scope) => {
-    const s = { ...HOME, ...(scope ?? {}) }
+    const s = { ...main.current, ...(scope ?? {}) }
     openSheet({ type: 'lem', key: s.key, title: s.title, about: s.about, seed })
   }, [openSheet])
   /** Send this without bringing the chat forward: the result shows where it was asked
    *  for (a draft appearing under the item), not as a conversation to read. */
   const write = useCallback<Ask>((seed, scope) => {
-    const s = { ...HOME, ...(scope ?? {}) }
+    const s = { ...main.current, ...(scope ?? {}) }
     openSheet({ type: 'lem', key: s.key, title: s.title, about: s.about, seed }, true)
   }, [openSheet])
   const open = useCallback((scope?: Partial<ChatScope>) => {
-    const existing = tabs.find((t) => t.type === 'lem')
-    if (existing && !scope) { openSheet(existing); return }
-    const s = { ...HOME, ...(scope ?? {}) }
+    const existing = tabs.find((t) => t.type === 'lem') as Extract<SheetTarget, { type: 'lem' }> | undefined
+    // carry on in the open conversation, unless it is a main one from an earlier day
+    const stale = !!existing && isHome(existing.key) && existing.key !== main.current.key
+    if (existing && !scope && !stale) { openSheet(existing); return }
+    const s = { ...main.current, ...(scope ?? {}) }
     openSheet({ type: 'lem', key: s.key, title: s.title, about: s.about })
   }, [openSheet, tabs])
   const close = useCallback(() => closeTab('lem'), [closeTab])

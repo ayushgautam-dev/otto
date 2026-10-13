@@ -21,7 +21,7 @@ KNOWN = [
     ("gmail", "Gmail", "Threads, who spoke last, and what was asked of you.", True, True),
     ("google_calendar", "Google Calendar", "Who you are meeting, and what was agreed but never booked.", True, True),
     # Microsoft 365: mail and calendar in one sign-in. Either this or Gmail is enough.
-    ("outlook", "Outlook", "Mail and calendar, for work that lives in Microsoft 365.", True, True),
+    ("outlook", "Outlook", "Mail and calendar, for work that lives in Microsoft 365. Connect it if your Teams meetings sit on a Microsoft calendar: they are not in Google Calendar, even when your phone shows the two together.", True, True),
     ("granola", "Granola", "Meeting notes and action items — where a promise made out loud gets written down. Sign in with your own Granola account; the free plan is enough.", False, True),
     ("googlemeet", "Google Meet", "Call transcripts, where Meet recorded one.", False, False),
     ("slack", "Slack", "The channels you invited the app to, where the day's asks land.", False, False),

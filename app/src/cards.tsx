@@ -379,7 +379,7 @@ export function EmailCard({ draft, onSent, compact, docs = [] }: {
           <button className="pill ghost" onClick={held.cancel}>Sending in {held.left}s · Undo</button>
         ) : (
           <button className="pill" disabled={state === 'sending' || !to.length || !body.trim() || issues.length > 0}
-            title={issues.length ? `Fix first: ${issues.join(', ')}` : undefined}
+            title={issues.length ? `Fix first: ${issues.join(', ')}` : !to.length ? 'Add their address in the To line to send' : undefined}
             onClick={() => held.start(reallySend)}>
             <Send size={12} /> {state === 'sending' ? 'Sending…' : isReply ? 'Send reply' : 'Send'}
           </button>

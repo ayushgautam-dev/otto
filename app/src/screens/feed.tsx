@@ -13,6 +13,7 @@ import { Lens } from './lenses'
 import { WeatherMark } from '../weather'
 
 import { tm } from '../teammate'
+import { turnOnByKey } from '../autopilot-sync'
 import { useOpenTask, type TaskRow } from '../tasks'
 import { useCatching, useProgress, useFinishedSummary, type Progress } from '../backfill'
 /* The Feed answers "what is new and what needs me?".
@@ -23,12 +24,28 @@ function endOfToday(): string {
   const d = new Date(); d.setHours(24, 0, 0, 0); return d.toISOString()
 }
 
+/* Somebody on a meeting who is being met for the first time and has a brief written (the
+   same rule as the desk app): something on record under `research`, and no earlier
+   meeting with them on the calendar. */
+const firstMeetingBrief = (meeting: string) =>
+  `coalesce(p.research,'') <> '' and p.email is not null
+   and ${meeting}.participants::text ilike '%' || p.email || '%'
+   and not exists (select 1 from interactions e where e.source='calendar' and e.id <> ${meeting}.id
+                   and e.occurred_at < ${meeting}.occurred_at and e.participants::text ilike '%' || p.email || '%')`
+
 function Greeting({ name }: { name: string }) {
-  const { version } = useNav()
+  const { version, openSheet } = useNav()
+  // a first meeting in the next two days with a brief written
+  const brief = useSql<{ id: string; title: string; starts_at: string; person: string }>(rev(
+    `select i.id, i.subject as title, i.occurred_at as starts_at, p.name as person
+     from interactions i join people p on ${firstMeetingBrief('i')}
+     where i.source='calendar' and i.kind='meeting'
+       and i.occurred_at > now() and i.occurred_at < now() + interval '2 days'
+     order by i.occurred_at asc limit 1`, version)).items[0]
   // Only the real calendar, and only what is still to come today. A meeting derived
   // from an email is not on the calendar, and something three days out is not "next up".
-  const next = useSql<{ title: string; starts_at: string }>(rev(
-    `select subject as title, occurred_at as starts_at
+  const next = useSql<{ id: string; title: string; starts_at: string }>(rev(
+    `select id, subject as title, occurred_at as starts_at
      from interactions
      where source='calendar' and kind='meeting'
        and occurred_at >= now()
@@ -46,8 +63,14 @@ function Greeting({ name }: { name: string }) {
       <span>
         {greeting()}, {name}.{' '}
         {m
-          ? <>Next up, <b>{label}</b> at {fmtTime(m.starts_at)}.</>
+          ? <>Next up, <button className="hello-meet" title="Who is coming, and what is open with them"
+              onClick={() => openSheet({ type: 'meeting', id: m.id })}><b>{label}</b></button> at {fmtTime(m.starts_at)}.</>
           : <>Nothing else on your calendar today.</>}
+        {brief && (
+          <button className="hello-brief" onClick={() => openSheet({ type: 'meeting', id: brief.id })}>
+            A brief on {brief.person.split(' ')[0]} is ready for {new Date(brief.starts_at).toDateString() === new Date().toDateString() ? 'today' : new Date(brief.starts_at).toLocaleDateString(undefined, { weekday: 'long' })} at {fmtTime(brief.starts_at)}
+          </button>
+        )}
       </span>
     </div>
   )
@@ -147,17 +170,21 @@ function Prepared() {
 function Suggestions() {
   const { version, bump } = useNav()
   const askLem = useAskLem()
-  const q = useSql<{ id: string; proposal: string; reason: string }>(rev(
-    `select id, proposal, reason from suggestions where status='open'
+  /* Two kinds: something worth building, and a built-in autopilot the person has off that
+     their own numbers say would earn its place. The second carries the menu key, and
+     accepting it just switches that one on. (`select *` keeps an older pod working.) */
+  const q = useSql<{ id: string; proposal: string; reason: string; autopilot_key?: string | null }>(rev(
+    `select * from suggestions where status='open'
      order by created_at desc limit 3`, version))
   if (!q.items.length) return null
 
-  async function decide(id: string, status: 'added' | 'dismissed', proposal?: string) {
+  async function decide(id: string, status: 'added' | 'dismissed', proposal?: string, key?: string | null) {
     await records.update('suggestions', id, { status })
     bump()
-    if (status === 'added' && proposal) {
-      askLem(`Set this up for me as an autopilot: ${proposal}`)
-    }
+    if (status !== 'added' || !proposal) return
+    const on = key ? await turnOnByKey(key).catch(() => false) : false
+    if (on) bump()
+    else askLem(`Set this up for me as an autopilot: ${proposal}`)
   }
 
   return (
@@ -168,7 +195,7 @@ function Suggestions() {
           <div className="sugg-p">{s.proposal}</div>
           <div className="sugg-r">{s.reason}</div>
           <div className="btn-row" style={{ marginTop: 8 }}>
-            <button className="btn" onClick={() => void decide(s.id, 'added', s.proposal)}>Add it</button>
+            <button className="btn" onClick={() => void decide(s.id, 'added', s.proposal, s.autopilot_key)}>{s.autopilot_key ? 'Turn it on' : 'Add it'}</button>
             <button className="btn quiet" onClick={() => void decide(s.id, 'dismissed')}>No thanks</button>
           </div>
         </div>
@@ -225,7 +252,7 @@ function Reading({ compact }: { compact?: boolean }) {
       <div className="reading-strip-h">
         <i className="reading-dot" aria-hidden="true" />
         <b>{tm()} is still reading.</b>
-        <span>More will appear, and some of this may change.</span>
+        <span>More will appear, and some of this may change. You will get an email when it is done.</span>
       </div>
       <dl className="reading-row">
         <div><dt>emails collected</dt><dd>{n?.emails ?? 0}</dd></div>
@@ -238,7 +265,7 @@ function Reading({ compact }: { compact?: boolean }) {
   return (
     <div className="reading" role="status">
       <b>{tm()} is reading your mail.</b>
-      <p>The first loose ends usually appear within a few minutes. You can leave this open or come back.</p>
+      <p>The first loose ends usually appear within a few minutes; reading everything takes longer. You can close this: {tm()} will email you when it is done.</p>
       <div className="reading-bar" aria-hidden="true"><i className="going" /></div>
       <div className="reading-nums">
         <div><b>{n?.emails ?? 0}</b><span>emails collected</span></div>

@@ -38,6 +38,7 @@ class SyncGranolaInput(BaseModel):
 
 class SyncGranolaResult(BaseModel):
     listed: int = 0
+    already_have: int = 0     # notes in the ledger already: not fetched again
     shaped: int = 0
     recorded: int = 0
     skipped_duplicate: int = 0
@@ -133,18 +134,44 @@ def _parse_meetings(text: str) -> list[dict]:
         if not mid:
             continue
         people = []
+        named: list[dict] = []
         pm = _PARTS_RE.search(inner or "")
         if pm:
             blob = unescape(pm.group(1))
             for em in _EMAIL_RE.findall(blob):
                 people.append(em.strip().lower())
+            named = _participants(blob)
         out.append({
             "id": mid,
             "title": (attrs.get("title") or "Meeting notes").strip(),
-            "date": (attrs.get("date") or "").strip(),
+            # the exact start, when Granola gives it; the printed date otherwise
+            "date": (attrs.get("meeting_at") or attrs.get("date") or "").strip(),
             "emails": people,
+            "named": named,
             "inner": inner or "",
         })
+    return out
+
+
+def _participants(blob: str) -> list[dict]:
+    """'Dana Reed (note creator) from Acme <dana@acme.com>, Sam Ortiz from Example'
+    -> who was there, by name, with an address where one is given. People are kept even
+    without an address: a name is enough to tie a promise to somebody."""
+    out = []
+    for chunk in re.split(r",|\n", blob or ""):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        found = _EMAIL_RE.search(chunk)
+        email = found.group(0).strip().lower() if found else ""
+        name = re.sub(r"<[^>]*>", " ", chunk)
+        creator = bool(re.search(r"\(\s*note creator\s*\)", name, re.I))
+        name = re.sub(r"\([^)]*\)", " ", name)
+        name = re.split(r"\s+from\s+", name, maxsplit=1)[0]
+        name = _EMAIL_RE.sub(" ", name)
+        name = re.sub(r"\s+", " ", name).strip(" -–—")
+        if email or name:
+            out.append({"name": name, "email": email, "creator": creator})
     return out
 
 
@@ -153,6 +180,10 @@ def _parse_when(raw: str) -> str:
     v = (raw or "").strip()
     if not v:
         return ""
+    try:
+        return datetime.fromisoformat(v.replace("Z", "+00:00")).isoformat()
+    except ValueError:
+        pass
     off = timezone.utc
     m = re.search(r"GMT([+-])(\d{1,2}):?(\d{2})?", v)
     if m:
@@ -167,8 +198,11 @@ def _parse_when(raw: str) -> str:
     return ""
 
 
-def _account_for(pod, app: str) -> str | None:
-    """Which connected account to use for this app.
+def _account_for(pod, app: str, user_id: str = "") -> str | None:
+    """Which connected account to use for this app: MY account for it, never just the
+    first one in the workspace. Connected accounts belong to the organisation, so in a
+    workspace two people share, the first Granola account may be a colleague's, and
+    reading it would put their meeting notes on my desk.
 
     Two MCP installs live side by side here (Granola and a transcript server) and
     both report is_default, so omitting the account lets the server pick whichever
@@ -187,8 +221,11 @@ def _account_for(pod, app: str) -> str | None:
         accts = pod.connectors.accounts.list().to_dict()
         rows = accts.get("items", accts) if isinstance(accts, dict) else accts
         for a in rows:
-            if str(a.get("auth_config_id")) == str(cfg_id) and a.get("status") == "CONNECTED":
-                return a.get("id")
+            if str(a.get("auth_config_id")) != str(cfg_id) or a.get("status") != "CONNECTED":
+                continue
+            if user_id and str(a.get("user_id") or "") != user_id:
+                continue
+            return a.get("id")
     except Exception:
         return None
     return None
@@ -199,7 +236,12 @@ async def sync_granola(ctx: FunctionContext, data: SyncGranolaInput) -> SyncGran
     res = SyncGranolaResult()
     me = (ctx.user_email or "").lower()
 
-    account_id = _account_for(pod, data.app)
+    uid = str(getattr(ctx, "user_id", "") or "")
+    account_id = _account_for(pod, data.app, uid)
+    if uid and not account_id:
+        # this person has not connected it; a colleague's account is not theirs to read
+        res.errors.append("Granola is not connected for this person.")
+        return res
 
     try:
         listed = pod.connectors.execute(
@@ -219,6 +261,20 @@ async def sync_granola(ctx: FunctionContext, data: SyncGranolaInput) -> SyncGran
 
     meetings = _parse_meetings(list_text)
     res.listed = len(meetings)
+
+    # Only the notes not in the ledger yet are fetched. That is what lets every pass ask
+    # for the whole month: a note that was missed (Granola connected late, the app
+    # closed, a "this week" that had only just begun) is picked up by the next pass, and
+    # a pass that finds nothing new costs one listing call.
+    try:
+        have = {r["external_id"] for r in pod.query(
+            "select external_id from interactions where source = 'granola' "
+            "and body_ref is not null and occurred_at > now() - interval '60 days'").to_dict()["items"]}
+    except Exception:
+        have = set()
+    known = [m for m in meetings if f"granola:{m['id']}" in have]
+    res.already_have = len(known)
+    meetings = [m for m in meetings if f"granola:{m['id']}" not in have]
 
     # Notes come from a second call. The parameter is `meeting_ids` (not `ids`) and it
     # accepts at most ten, so ask in batches rather than one request per meeting.
@@ -246,11 +302,19 @@ async def sync_granola(ctx: FunctionContext, data: SyncGranolaInput) -> SyncGran
         if not body:
             continue
 
-        attendees = [
-            {"email": em, "role": "attendee"}
-            for em in m["emails"] if em and em != me
-        ]
-        counterpart = attendees[0]["email"] if len(attendees) == 1 else ""
+        # everybody Granola names except the person themselves, with or without an address
+        attendees = []
+        for who in (m.get("named") or [{"email": em, "name": ""} for em in m["emails"]]):
+            if who.get("creator") or (who.get("email") and who["email"] == me):
+                continue
+            entry = {"role": "attendee"}
+            if who.get("email"):
+                entry["email"] = who["email"]
+            if who.get("name"):
+                entry["name"] = who["name"]
+            attendees.append(entry)
+        with_address = [a for a in attendees if a.get("email")]
+        counterpart = with_address[0]["email"] if len(with_address) == 1 and len(attendees) == 1 else ""
 
         interactions.append({
             "kind": "meeting",

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Send, CalendarPlus, FileText, ArrowRight, ChevronRight } from 'lucide-react'
+import { Send, CalendarPlus, CalendarDays, FileText, ArrowRight, ChevronRight } from 'lucide-react'
 import { useCurrentUser } from 'lemma-sdk/react'
 import {
   client, useSql, records, rev, lit, greeting, fmtTime, startOfToday, endOfToday, cleanTitle,
@@ -14,6 +14,7 @@ import { Board, boardSql, type BoardRow } from './board'
 import { WeatherMark } from '../weather'
 import { useCatching, useProgress, useFinishedSummary, type Progress } from '../backfill'
 import { useTeammate, tm } from '../teammate'
+import { turnOnByKey } from '../autopilot-sync'
 import { useAccounts, accountLabel, resolveAccount } from '../accounts'
 
 /* Today — read once, top to bottom, then get on with the day.
@@ -28,7 +29,16 @@ import { useAccounts, accountLabel, resolveAccount } from '../accounts'
 
 type Filter = 'all' | 'you' | 'them'
 
-interface Meet { id: string; title: string; starts_at: string; [k: string]: unknown }
+interface Meet { id: string; title: string; starts_at: string; briefs?: number; [k: string]: unknown }
+
+/* Somebody on a meeting who is being met for the first time and has a brief written:
+   they have something on record under `research`, and no earlier meeting with them is on
+   the calendar. Written once as SQL so the day's ribbon and the shelf agree. */
+const firstMeetingBrief = (meeting: string) =>
+  `coalesce(p.research,'') <> '' and p.email is not null
+   and ${meeting}.participants::text ilike '%' || p.email || '%'
+   and not exists (select 1 from interactions e where e.source='calendar' and e.id <> ${meeting}.id
+                   and e.occurred_at < ${meeting}.occurred_at and e.participants::text ilike '%' || p.email || '%')`
 
 function useNow(ms = 60000) {
   const [now, setNow] = useState(() => Date.now())
@@ -41,6 +51,7 @@ function useNow(ms = 60000) {
 /** The day's shape: a thin line of hours with each meeting marked and a pin for now,
  *  and beneath it the meetings themselves, in order — past ones spent, the next one lit. */
 function Ribbon({ meets, now }: { meets: Meet[]; now: number }) {
+  const { open } = useNav()
   const day0 = new Date(); day0.setHours(0, 0, 0, 0)
   const hourOf = (iso: string) => { const d = new Date(iso); return d.getHours() + d.getMinutes() / 60 }
   const hours = meets.map((m) => hourOf(m.starts_at))
@@ -72,9 +83,13 @@ function Ribbon({ meets, now }: { meets: Meet[]; now: number }) {
         {meets.map((m) => {
           const past = hourOf(m.starts_at) + 0.5 < nowH
           return (
-            <span key={m.id} className={`mpill${past ? ' past' : ''}${m.id === nextId ? ' next' : ''}`}>
+            // a meeting opens: who is coming, what is open with them, and the brief if they are new
+            <button key={m.id} className={`mpill${past ? ' past' : ''}${m.id === nextId ? ' next' : ''}`}
+              onClick={() => open({ type: 'meeting', id: m.id })}
+              title={Number(m.briefs) > 0 ? 'A brief is ready for this one' : 'Open'}>
               <small>{fmtTime(m.starts_at)}</small> {cleanTitle(m.title)}
-            </span>
+              {Number(m.briefs) > 0 && !past && <i className="mpill-brief" aria-label="Brief ready" />}
+            </button>
           )
         })}
       </div>
@@ -86,12 +101,13 @@ function Masthead({ name }: { name: string }) {
   const { version } = useNav()
   const now = useNow()
   const q = useSql<Meet>(rev(
-    `select id, subject as title, occurred_at as starts_at
-     from interactions
-     where source='calendar' and kind='meeting'
-       and occurred_at >= ${lit(startOfToday())}
-       and occurred_at < ${lit(endOfToday())}
-     order by occurred_at asc`, version))
+    `select i.id, i.subject as title, i.occurred_at as starts_at,
+            (select count(*) from people p where ${firstMeetingBrief('i')}) as briefs
+     from interactions i
+     where i.source='calendar' and i.kind='meeting'
+       and i.occurred_at >= ${lit(startOfToday())}
+       and i.occurred_at < ${lit(endOfToday())}
+     order by i.occurred_at asc`, version))
   // Only the real calendar, and only what is still to come today.
   const next = q.items.find((m) => Date.parse(m.starts_at) >= now)
   const date = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })
@@ -127,7 +143,21 @@ function ReadyShelf() {
      left join people p on p.id=l.person_id
      where d.status='pending'
      order by l.id, d.created_at desc`, version))
-  if (!q.items.length) return null
+  // a first meeting in the next two days with a brief written: ready to read, like a reply is ready to send
+  const briefs = useSql<{ id: string; title: string; starts_at: string; person: string; avatar_url?: string | null; research: string }>(rev(
+    `select i.id, i.subject as title, i.occurred_at as starts_at, p.name as person, p.avatar_url, left(p.research, 400) as research
+     from interactions i join people p on ${firstMeetingBrief('i')}
+     where i.source='calendar' and i.kind='meeting'
+       and i.occurred_at > now() and i.occurred_at < now() + interval '2 days'
+     order by i.occurred_at asc limit 4`, version))
+  if (!q.items.length && !briefs.items.length) return null
+  // the brief is markdown; the card shows its first lines as plain words
+  const plain = (t: string) => t.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_`#>]/g, '').replace(/\s+/g, ' ').trim()
+  const whenOf = (iso: string) => {
+    const d = new Date(iso)
+    const today = d.toDateString() === new Date().toDateString()
+    return `${today ? 'Today' : d.toLocaleDateString(undefined, { weekday: 'long' })}, ${fmtTime(iso)}`
+  }
   const verb = (r: Ready) => {
     const who = r.person.split(' ')[0] || 'them'
     if (Number(r.docs) > 0) return `Document for ${who}`
@@ -138,8 +168,22 @@ function ReadyShelf() {
   const preview = (r: Ready) => String(r.body ?? '').replace(/^(hi|hey|hello|dear)\s+[^,\n]+,?\s*/i, '').replace(/\s+/g, ' ').trim()
   return (
     <section className="shelf">
-      <div className="sec-h"><Orb size={14} /> Ready for you <span className="muted">{q.items.length}</span></div>
+      <div className="sec-h"><Orb size={14} /> Ready for you <span className="muted">{q.items.length + briefs.items.length}</span></div>
       <div className="shelf-row">
+        {briefs.items.map((b) => (
+          <button key={`m${b.id}${b.person}`} className="note" onClick={() => open({ type: 'meeting', id: b.id })}>
+            <span className="note-top">
+              <Avatar name={b.person || '?'} src={b.avatar_url} size="xs" />
+              <span className="note-k"><CalendarDays size={12} /> Brief on {b.person.split(' ')[0] || 'them'}</span>
+            </span>
+            <span className="note-subj">{cleanTitle(b.title)}</span>
+            <span className="note-body">{plain(b.research)}</span>
+            <span className="note-foot">
+              <span className="note-for">{whenOf(b.starts_at)}</span>
+              <span className="note-go">Read <ArrowRight size={12} /></span>
+            </span>
+          </button>
+        ))}
         {q.items.map((r) => (
           <button key={r.loop_id} className="note" onClick={() => open({ type: 'loop', id: r.loop_id })}>
             <span className="note-top">
@@ -195,14 +239,22 @@ function StoryCard({ s, loops, onChange }: { s: SituationRow & { domain?: string
 function Noticed() {
   const { version, bump } = useNav()
   const lem = useLem()
-  const q = useSql<{ id: string; proposal: string; reason: string }>(rev(
-    `select id, proposal, reason from suggestions where status='open'
+  /* Two kinds of thing are noticed: something worth building, and a built-in autopilot
+     the person has off that their own numbers say would earn its place. The second kind
+     carries the menu key, and accepting it just switches that one on. (`select *` so a
+     pod from before that column existed still shows its suggestions.) */
+  const q = useSql<{ id: string; proposal: string; reason: string; autopilot_key?: string | null }>(rev(
+    `select * from suggestions where status='open'
      order by created_at desc limit 3`, version))
   if (!q.items.length) return null
-  async function decide(id: string, status: 'added' | 'dismissed', proposal?: string) {
+  async function decide(id: string, status: 'added' | 'dismissed', proposal?: string, key?: string | null) {
     await records.update('suggestions', id, { status })
     bump()
-    if (status === 'added' && proposal) lem.ask(`Set this up for me as an autopilot: ${proposal}`)
+    if (status !== 'added' || !proposal) return
+    // a built-in is switched on; only something new has to be built
+    const on = key ? await turnOnByKey(key).catch(() => false) : false
+    if (on) bump()
+    else lem.ask(`Set this up for me as an autopilot: ${proposal}`)
   }
   return (
     <section className="noticed">
@@ -214,7 +266,7 @@ function Noticed() {
             <span>{s.reason}</span>
           </div>
           <div className="row-gap">
-            <button className="btn ink sm" onClick={() => void decide(s.id, 'added', s.proposal)}>Set it up</button>
+            <button className="btn ink sm" onClick={() => void decide(s.id, 'added', s.proposal, s.autopilot_key)}>{s.autopilot_key ? 'Turn it on' : 'Set it up'}</button>
             <button className="btn ghost sm" onClick={() => void decide(s.id, 'dismissed')}>No thanks</button>
           </div>
         </div>
@@ -437,7 +489,7 @@ function Reading({ teammate, compact }: { teammate: string; compact?: boolean })
       <div className="reading-strip-h">
         <i className="reading-dot" aria-hidden="true" />
         <b>{teammate} is still reading.</b>
-        <span>More will appear, and some of this may change.</span>
+        <span>More will appear, and some of this may change. You will get an email when it is done.</span>
       </div>
       <dl className="reading-row">
         <div><dt>emails collected</dt><dd>{n?.emails ?? 0}</dd></div>
@@ -451,7 +503,7 @@ function Reading({ teammate, compact }: { teammate: string; compact?: boolean })
     <div className="reading" role="status">
       <Orb live size={44} />
       <div className="display sm">{teammate} is reading your mail.</div>
-      <p className="lede">The first loose ends usually appear within a few minutes. You can leave this open or come back.</p>
+      <p className="lede">The first loose ends usually appear within a few minutes; reading everything takes longer. You can close this: {teammate} will email you when it is done.</p>
       <div className="reading-bar" aria-hidden="true"><i className="going" /></div>
       {nums}
     </div>

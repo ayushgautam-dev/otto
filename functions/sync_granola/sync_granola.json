@@ -17,6 +17,14 @@
       },
       {
         "permission_ids": [
+          "datastore.record.read",
+          "datastore.table.read"
+        ],
+        "resource_name": "interactions",
+        "resource_type": "datastore_table"
+      },
+      {
+        "permission_ids": [
           "function.execute"
         ],
         "resource_name": "record_interaction",

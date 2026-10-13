@@ -27,10 +27,26 @@
       {
         "permission_ids": [
           "datastore.record.read",
+          "datastore.table.read"
+        ],
+        "resource_name": "drafts",
+        "resource_type": "datastore_table"
+      },
+      {
+        "permission_ids": [
+          "datastore.record.read",
           "datastore.record.write",
           "datastore.table.read"
         ],
         "resource_name": "interactions",
+        "resource_type": "datastore_table"
+      },
+      {
+        "permission_ids": [
+          "datastore.record.read",
+          "datastore.table.read"
+        ],
+        "resource_name": "situations",
         "resource_type": "datastore_table"
       }
     ]

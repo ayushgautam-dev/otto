@@ -15,6 +15,8 @@ export type SheetTarget =
   | { type: 'workstream'; id: string }
   | { type: 'doc'; id: string }
   | { type: 'loop'; id: string; nudge?: boolean }
+  /** a meeting on the calendar (its row in the ledger) */
+  | { type: 'meeting'; id: string }
   | { type: 'lem'; key?: string; title?: string; about?: string; seed?: string }
 
 export const tabKey = (t: NonNullable<SheetTarget>) =>

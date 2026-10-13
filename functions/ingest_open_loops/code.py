@@ -9,6 +9,16 @@
 # Natural keys: company=domain, person=email, loop=(thread_ref, kind, person),
 # timeline=ref. Everything is resolved here, so the agent only passes emails,
 # domains and track slugs — never uuids.
+#
+# Three things a commitment is NOT tied to, each of which used to lose real work:
+#   * one conversation. The same matter carries on in a new email, on a call, in another
+#     mailbox. `changes` lets the reader say what a message did to something already
+#     open: settled it, or moved it to the conversation it now lives in. Either way the
+#     reply that was prepared for the old state is set aside in the same write.
+#   * an email address. A promise made on a call is owed to a person whose address the
+#     note never mentions. `person_name` stands in when there is no address.
+#   * the daily grouping pass. `topic` files a new commitment under the topic it
+#     belongs to the moment it is found.
 
 import re
 from datetime import datetime, timezone
@@ -25,7 +35,7 @@ class CompanyIn(BaseModel):
 
 
 class PersonIn(BaseModel):
-    email: str
+    email: str | None = None        # leave out for somebody known by name only
     name: str
     role: str | None = None
     company_domain: str | None = None
@@ -37,7 +47,9 @@ class PersonIn(BaseModel):
 
 
 class LoopIn(BaseModel):
-    person_email: str
+    person_email: str | None = None
+    person_name: str | None = None  # when no address is known (somebody on a call)
+    topic: str | None = None        # title of the existing topic this belongs under
     side: str                       # you | them | neither
     kind: str                       # reply_owed | promise | intro_owed | decision_owed | ack_owed | awaiting_reply | scheduling_stalled | going_cold
     obligation: str
@@ -58,6 +70,7 @@ class TaskIn(BaseModel):
     title: str
     detail: str | None = None
     person_email: str | None = None
+    person_name: str | None = None
     track_slug: str | None = None
     provenance: str | None = None
     source: str = "email"
@@ -69,6 +82,7 @@ class TaskIn(BaseModel):
 
 class TimelineIn(BaseModel):
     person_email: str | None = None
+    person_name: str | None = None
     company_domain: str | None = None
     type: str                       # email | meeting | stage_change | note | loop_opened | loop_closed
     title: str
@@ -78,9 +92,28 @@ class TimelineIn(BaseModel):
     ref: str | None = None
 
 
+class ChangeIn(BaseModel):
+    """What a message did to a commitment that is ALREADY open."""
+    loop: str                       # its `id`, as listed in already_open
+    action: str                     # settled | moved
+    reason: str                     # one plain sentence naming the message and its date
+    thread_ref: str | None = None   # moved: the conversation it carries on in
+    happened_at: str | None = None  # when that message was sent
+    obligation: str | None = None   # moved: reworded, if what is owed has changed
+    side: str | None = None
+    kind: str | None = None
+    urgency: int | None = None
+    urgency_reason: str | None = None
+    provenance: str | None = None
+    # moved: whose move it is now, when that is a different person from before
+    person_email: str | None = None
+    person_name: str | None = None
+
+
 class IngestInput(BaseModel):
     companies: list[CompanyIn] = Field(default_factory=list)
     people: list[PersonIn] = Field(default_factory=list)
+    changes: list[ChangeIn] = Field(default_factory=list)
     loops: list[LoopIn] = Field(default_factory=list)
     tasks: list[TaskIn] = Field(default_factory=list)
     timeline: list[TimelineIn] = Field(default_factory=list)
@@ -91,6 +124,9 @@ class IngestResult(BaseModel):
     people_created: int = 0
     loops_created: int = 0
     loops_skipped: int = 0
+    loops_settled: int = 0
+    loops_moved: int = 0
+    drafts_set_aside: int = 0
     tasks_created: int = 0
     drafts_created: int = 0
     timeline_created: int = 0
@@ -273,7 +309,40 @@ async def ingest_open_loops(ctx: FunctionContext, data: IngestInput) -> IngestRe
     # ---- lookups ----
     track_by_slug = {r["slug"]: r["id"] for r in rows("select id, slug from tracks")}
     company_by_domain = {r["domain"]: r["id"] for r in rows("select id, domain from companies where domain is not null")}
-    person_by_email = {r["email"]: r["id"] for r in rows("select id, email from people where email is not null")}
+    known_people = rows("select id, email, name, last_contact_at from people")
+    person_by_email = {r["email"]: r["id"] for r in known_people if r.get("email")}
+
+    def _name_key(n: str | None) -> str:
+        return re.sub(r"\s+", " ", (n or "").strip().lower())
+
+    def by_name(name: str | None, create: bool = True) -> str | None:
+        """The person a bare name refers to. One known person of that name is that
+        person; several, the one spoken to most recently; nobody, a new person known by
+        name only, whose address is filled in whenever it first turns up."""
+        key = _name_key(name)
+        if not key:
+            return None
+        same = [r for r in known_people if _name_key(r.get("name")) == key]
+        if not same and " " not in key:
+            # a call note often gives a first name only
+            same = [r for r in known_people if _name_key(r.get("name")).split(" ")[0] == key]
+            if len(same) > 1:
+                same = []          # "Rahul" with two Rahuls known: do not guess between them
+        if same:
+            same.sort(key=lambda r: str(r.get("last_contact_at") or ""), reverse=True)
+            return same[0]["id"]
+        if not create:
+            return None
+        row = pod.table("people").create({"name": (name or "").strip()})
+        known_people.append({"id": row["id"], "email": None, "name": (name or "").strip(), "last_contact_at": None})
+        res.people_created += 1
+        return row["id"]
+
+    def who(email: str | None, name: str | None, create: bool = True) -> str | None:
+        em = _norm_email(email)
+        if em and em in person_by_email:
+            return person_by_email[em]
+        return by_name(name, create) if not em else None
 
     # ---- companies (upsert by domain) ----
     for c in data.companies:
@@ -304,9 +373,11 @@ async def ingest_open_loops(ctx: FunctionContext, data: IngestInput) -> IngestRe
     }
     for p in data.people:
         em = _norm_email(p.email)
-        if not em:
+        if not em and not _name_key(p.name):
             continue
-        payload = {"email": em, "name": p.name}
+        payload = {"name": p.name}
+        if em:
+            payload["email"] = em
         if p.role:
             payload["role"] = p.role
         if p.context:
@@ -321,14 +392,28 @@ async def ingest_open_loops(ctx: FunctionContext, data: IngestInput) -> IngestRe
         dom = _norm_domain(p.company_domain) if p.company_domain else ""
         if dom and dom in company_by_domain:
             payload["company_id"] = company_by_domain[dom]
-        if em in person_by_email:
+        if em and em in person_by_email:
             pid = person_by_email[em]
             pod.table("people").update(pid, payload)
+        elif not em:
+            # known by name only: the same person every time that name comes up
+            pid = by_name(p.name)
+            pod.table("people").update(pid, {k: v for k, v in payload.items() if k != "name"} or {"name": p.name})
         else:
-            row = pod.table("people").create(payload)
-            pid = row["id"]
+            # An address seen for the first time. If exactly one person is so far known
+            # by this name alone, this is their address: fill it in, do not make a twin.
+            nameless = [r for r in known_people
+                        if not r.get("email") and _name_key(r.get("name")) == _name_key(p.name)]
+            if len(nameless) == 1:
+                pid = nameless[0]["id"]
+                pod.table("people").update(pid, payload)
+                nameless[0]["email"] = em
+            else:
+                row = pod.table("people").create(payload)
+                pid = row["id"]
+                known_people.append({"id": pid, "email": em, "name": p.name, "last_contact_at": None})
+                res.people_created += 1
             person_by_email[em] = pid
-            res.people_created += 1
         # track memberships (set semantics; first one primary), gated on relationship
         effective_rel = payload.get("relationship") or existing_rel.get(pid)
         kept = 0
@@ -338,7 +423,7 @@ async def ingest_open_loops(ctx: FunctionContext, data: IngestInput) -> IngestRe
                 continue
             if not _track_allowed(slug, effective_rel):
                 res.notes.append(
-                    f"{em}: not added to '{slug}' — relationship is "
+                    f"{em or p.name}: not added to '{slug}' — relationship is "
                     f"'{effective_rel or 'unset'}', not a {slug} counterparty"
                 )
                 continue
@@ -359,13 +444,98 @@ async def ingest_open_loops(ctx: FunctionContext, data: IngestInput) -> IngestRe
                     ):
                         pod.table("person_tracks").delete(row["id"])
                     existing_pt.discard((pid, tid))
-                    res.notes.append(f"{em}: removed from '{slug}' — now a {effective_rel}")
+                    res.notes.append(f"{em or p.name}: removed from '{slug}' — now a {effective_rel}")
 
     # relationships as they stand *after* the people pass, for the track guard below
     current_rel = {
         r["id"]: r.get("relationship")
         for r in rows("select id, relationship from people")
     }
+
+    # ---- changes to what is already open ----
+    # A message does not only open things. The person writes a NEW email that does what
+    # an open commitment asked for, or carries the matter on somewhere else; the other
+    # side answers in a different conversation. The reader says so here, by the id it was
+    # given in `already_open`, and the commitment follows the matter instead of staying
+    # pinned to the conversation it was first seen in.
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    def set_aside_drafts(loop_id: str, why: str) -> None:
+        # what was prepared for the old state would now repeat what was sent, or reply
+        # into a conversation that has moved on
+        for d in rows(f"select id from drafts where loop_id = '{loop_id}' and status = 'pending'"):
+            try:
+                pod.table("drafts").update(d["id"], {"status": "skipped", "note": ("Set aside: " + why)[:300]})
+                res.drafts_set_aside += 1
+            except Exception as exc:
+                res.notes.append(f"could not set a prepared reply aside: {str(exc)[:80]}")
+
+    for ch in data.changes:
+        lid = "".join(c for c in (ch.loop or "") if c.isalnum() or c == "-")
+        found = rows(
+            "select id, status, obligation, kind, side, thread_ref, provenance "
+            f"from loops where id = '{lid}'") if lid else []
+        if not found:
+            res.notes.append(f"change skipped: no commitment with id {ch.loop[:40]}")
+            continue
+        cur = found[0]
+        if cur.get("status") != "open":
+            # closed already (by the person, or by an earlier pass): leave it as it is
+            res.notes.append(f"change skipped: '{(cur.get('obligation') or '')[:50]}' is no longer open")
+            continue
+        why = (ch.reason or "").strip() or "A later message settled this."
+        action = (ch.action or "").strip().lower()
+        if action in ("settled", "settle", "closed", "close", "done"):
+            pod.table("loops").update(cur["id"], {
+                "status": "closed", "closed_at": now_iso, "closed_by": "auto",
+                "close_reason": why[:200],
+            })
+            set_aside_drafts(cur["id"], why)
+            pod.table("activity_events").create({
+                "icon": "check",
+                "what": f"Closed automatically — {(cur.get('obligation') or '')[:110]}",
+                "reason": why, "happened_at": now_iso,
+            })
+            res.loops_settled += 1
+        elif action in ("moved", "move", "carried", "continues", "updated", "update"):
+            patch: dict = {}
+            if ch.thread_ref and ch.thread_ref != (cur.get("thread_ref") or ""):
+                patch["thread_ref"] = ch.thread_ref[:300]
+                # Only what is said AFTER the message that moved it may settle it. The new
+                # conversation can already hold older messages from either side, and the
+                # inbox check would read those as the answer.
+                patch["opened_at"] = ch.happened_at or now_iso
+            if ch.obligation and ch.obligation.strip():
+                patch["obligation"] = ch.obligation.strip()
+            kind = (ch.kind or "").strip().lower()
+            if kind in _SIDE_BY_KIND:
+                patch["kind"] = kind
+            if ch.side or kind or ch.obligation:
+                patch["side"] = _norm_side(ch.side or cur.get("side"), patch.get("kind") or cur.get("kind"),
+                                           patch.get("obligation") or cur.get("obligation"))
+            if ch.urgency is not None:
+                patch["urgency"] = _norm_urgency(ch.urgency)
+            patch["urgency_reason"] = (ch.urgency_reason or why)[:300]
+            if ch.provenance:
+                patch["provenance"] = ch.provenance
+            if ch.person_email or ch.person_name:
+                # the next step now sits with somebody else: the item is filed under them
+                new_pid = who(ch.person_email, ch.person_name, create=not _norm_email(ch.person_email))
+                if not new_pid and _norm_email(ch.person_email):
+                    em2 = _norm_email(ch.person_email)
+                    row = pod.table("people").create(
+                        {"email": em2, "name": (ch.person_name or em2.split("@")[0]).strip()})
+                    new_pid = row["id"]
+                    person_by_email[em2] = new_pid
+                    known_people.append({"id": new_pid, "email": em2, "name": ch.person_name or "", "last_contact_at": None})
+                    res.people_created += 1
+                if new_pid:
+                    patch["person_id"] = new_pid
+            pod.table("loops").update(cur["id"], patch)
+            set_aside_drafts(cur["id"], why)
+            res.loops_moved += 1
+        else:
+            res.notes.append(f"change skipped: unknown action '{ch.action}' (use settled or moved)")
 
     # ---- loops (dedup by thread_ref + kind + person) ----
     # An OPEN loop on the same key always blocks. A CLOSED one only blocks a
@@ -386,13 +556,41 @@ async def ingest_open_loops(ctx: FunctionContext, data: IngestInput) -> IngestRe
         else:
             closed_by_key.setdefault(k, []).append(_fingerprint(r.get("obligation") or ""))
 
+    # Topics as they stand, so a new commitment joins the one it belongs to at once and
+    # does not sit apart until the next grouping pass.
+    topics: list[dict] = []
+    if any(l.topic for l in data.loops):
+        try:
+            topics = rows("select id, title, work_project_id from situations where status = 'active'")
+        except Exception:
+            topics = []
+
+    def topic_for(title: str | None) -> dict | None:
+        key = _name_key(title)
+        if not key:
+            return None
+        exact = [t for t in topics if _name_key(t.get("title")) == key]
+        if exact:
+            return exact[0]
+        near = [t for t in topics if key in _name_key(t.get("title")) or _name_key(t.get("title")) in key]
+        return near[0] if len(near) == 1 else None
+
     for l in data.loops:
         em = _norm_email(l.person_email)
-        pid = person_by_email.get(em)
+        # an address nobody has seen before still names a real person: keep them, and the
+        # commitment, instead of dropping both
+        pid = who(em, l.person_name)
+        if not pid and em:
+            row = pod.table("people").create({"email": em, "name": (l.person_name or em.split("@")[0]).strip()})
+            pid = row["id"]
+            person_by_email[em] = pid
+            known_people.append({"id": pid, "email": em, "name": l.person_name or "", "last_contact_at": None})
+            res.people_created += 1
         if not pid:
-            res.notes.append(f"loop skipped — unknown person {em}: {l.obligation[:60]}")
+            res.notes.append(f"loop skipped — nobody named for it: {l.obligation[:60]}")
             res.loops_skipped += 1
             continue
+        em = em or (l.person_name or "").strip()
         key = (l.thread_ref or "", l.kind, pid)
         if key in existing_loops:
             res.loops_skipped += 1
@@ -430,6 +628,11 @@ async def ingest_open_loops(ctx: FunctionContext, data: IngestInput) -> IngestRe
             payload["due_at"] = l.due_at
         if l.thread_ref:
             payload["thread_ref"] = l.thread_ref
+        t = topic_for(l.topic)
+        if t:
+            payload["situation_id"] = t["id"]
+            if t.get("work_project_id"):
+                payload["work_project_id"] = t["work_project_id"]
         loop_row = pod.table("loops").create(payload)
         existing_loops.add(key)
         open_by_person.setdefault(pid, []).append(fp)
@@ -462,7 +665,7 @@ async def ingest_open_loops(ctx: FunctionContext, data: IngestInput) -> IngestRe
         key = ((t.thread_ref or ""), t.title.strip().lower())
         if key in existing_tasks:
             continue
-        t_pid = person_by_email.get(_norm_email(t.person_email)) if t.person_email else None
+        t_pid = who(t.person_email, t.person_name) if (t.person_email or t.person_name) else None
         t_fp = _fingerprint(t.title)
         if _is_near_duplicate(t_fp, open_task_fps.get(t_pid or "", [])):
             res.notes.append(f"deduped task: '{t.title[:60]}' repeats an open task")
@@ -509,9 +712,9 @@ async def ingest_open_loops(ctx: FunctionContext, data: IngestInput) -> IngestRe
         if t.ref:
             row["ref"] = t.ref
             existing_refs.add(t.ref)
-        pem = _norm_email(t.person_email) if t.person_email else ""
-        if pem and pem in person_by_email:
-            row["person_id"] = person_by_email[pem]
+        t_who = who(t.person_email, t.person_name, create=False) if (t.person_email or t.person_name) else None
+        if t_who:
+            row["person_id"] = t_who
         dom = _norm_domain(t.company_domain) if t.company_domain else ""
         if dom and dom in company_by_domain:
             row["company_id"] = company_by_domain[dom]
@@ -525,7 +728,8 @@ async def ingest_open_loops(ctx: FunctionContext, data: IngestInput) -> IngestRe
     # case (this fires on every incoming mail), and logging it buried the real entries:
     # the feed was dozens of "Ingested 0 loops and 0 tasks across 0 new people" a day.
     _touched = (res.loops_created + res.tasks_created + res.people_created
-                + res.companies_created + res.drafts_created + res.timeline_created)
+                + res.companies_created + res.drafts_created + res.timeline_created
+                + res.loops_settled + res.loops_moved)
     if _touched == 0:
         return res
 

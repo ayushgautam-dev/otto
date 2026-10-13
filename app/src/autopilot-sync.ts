@@ -179,6 +179,17 @@ export async function setMine(e: CatalogEntry | null, existing: Sched | undefine
   await createMine(e, await myId())
 }
 
+/** Switch on a built-in autopilot by its menu key: what "Turn it on" does when the
+ *  person accepts a suggestion to use one they have off. False if the menu has no such
+ *  entry (then the caller falls back to asking for it to be built). */
+export async function turnOnByKey(key: string): Promise<boolean> {
+  const [me, menu, all] = await Promise.all([myId(), loadCatalog(), listSchedules()])
+  const e = menu.find((x) => x.key === key)
+  if (!e) return false
+  await setMine(e, myCopy(e, all.filter((x) => x.user_id === me)), true)
+  return true
+}
+
 /** Make sure I have my own copy of every menu entry that starts on. Never re-enables one
  *  I switched off (that copy exists, paused). A watcher that starts on (new mail) is set
  *  up as soon as the account it watches is connected, and quietly skipped until then.

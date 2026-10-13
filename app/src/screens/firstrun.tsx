@@ -328,8 +328,8 @@ export function FirstRun({ name, onDone }: { name: string; onDone: () => void })
             {wa?.handle && waQr ? (
               <>
                 <p className="fr-sub">{wa.mine
-                  ? `Scan the code and send the message. Your number ending ${lastFour(wa.mine)} is already linked.`
-                  : 'Scan the code and send the message. The first time, it asks for your email and a code we send there.'}</p>
+                  ? `Scan the code and send the message. Your number ending ${lastFour(wa.mine)} is already linked. ${teammate} will message you there when your desk is ready.`
+                  : `Scan the code and send the message. The first time, it asks for your email and a code we send there. ${teammate} will message you there when your desk is ready.`}</p>
                 <div className="fr-wa">
                   <svg className="fr-qr" viewBox={`0 0 ${waQr.size} ${waQr.size}`} role="img"
                     aria-label={`QR code that opens a WhatsApp chat with ${wa.handle}`} shapeRendering="crispEdges">
@@ -378,7 +378,8 @@ export function FirstRun({ name, onDone }: { name: string; onDone: () => void })
           <>
             <h1>{unread > 0 ? `Reading ${unread} ${unread === 1 ? 'message' : 'messages'}.`
               : counts.open_loops > 0 ? `${counts.open_loops} loose ${counts.open_loops === 1 ? 'end' : 'ends'} found.` : 'You are all set.'}</h1>
-            <p className="fr-sub">{unread > 0 ? 'Loose ends appear as found.' : connected.length ? 'Older mail is still loading.' : 'Connect mail any time.'}</p>
+            <p className="fr-sub">{unread > 0 ? `Loose ends appear as found. The full read takes a while, so you can close this: ${teammate} will email you when it is done.`
+              : connected.length ? `Older mail is still loading. ${teammate} will email you when it has all been read.` : 'Connect mail any time.'}</p>
             {shifts.length > 0 && (
               <div className="fr-shifts">
                 <div className="fr-shifts-h">On shift for you</div>

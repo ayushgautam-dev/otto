@@ -105,6 +105,11 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -.01em; margin: 0; }
 /* ---------- greeting ---------- */
 .hello { font-size: 21px; line-height: 1.35; letter-spacing: -.02em; margin: 0 0 20px; font-weight: 500; }
 .hello b { font-weight: 500; border-bottom: 1px solid var(--line); }
+/* the next meeting opens; it reads as part of the sentence */
+.hello-meet { font: inherit; letter-spacing: inherit; color: inherit; padding: 0; cursor: pointer; }
+.hello-meet:hover b { border-bottom-color: var(--ink); }
+.hello-brief { display: block; margin-top: 4px; padding: 0; font-size: 13px; font-weight: 450; letter-spacing: 0; color: var(--muted); cursor: pointer; text-align: left; }
+.hello-brief:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
 
 /* ---------- ask box ---------- */
 .ask {

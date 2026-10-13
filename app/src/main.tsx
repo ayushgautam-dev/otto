@@ -16,11 +16,10 @@ import { People } from './screens/people'
 import { Docs } from './screens/docs'
 import { Autopilots } from './screens/autopilots'
 import { FirstRun, needsFirstRun } from './screens/firstrun'
-import { CloneGate } from './gate'
 import { ensureMyAutopilots, ensureSkills } from './autopilot-sync'
 import { ensureOttoMail } from './ottomail'
 import { useTeammate, useTeammateFace, DEFAULT_TEAMMATE } from './teammate'
-import { useCatchUp, CatchUpCtx, type CatchUp, useFreshCalendar } from './backfill'
+import { useCatchUp, CatchUpCtx, type CatchUp, useFreshCalendar, rememberAppUrl } from './backfill'
 import { useNewAccountCatchUp, useAccounts } from './accounts'
 import { Mailboxes } from './mailboxes'
 import './styles.css'
@@ -128,7 +127,7 @@ function Shell({ name, email }: { name: string; email: string }) {
   else screen = <Feed userName={name} />
   // anyone missing their own copy of a default autopilot gets it quietly; anything they
   // switched off stays off
-  useEffect(() => { void ensureSkills().catch(() => 0); void ensureMyAutopilots().catch(() => 0); void ensureOttoMail().catch(() => null) }, [])
+  useEffect(() => { void ensureSkills().catch(() => 0); void ensureMyAutopilots().catch(() => 0); void ensureOttoMail().catch(() => null); void rememberAppUrl() }, [])
   // older history keeps loading in the pod; this only watches it and refreshes the pages
   const { bump } = useNav()
   const catching = useCatchUp(bump)
@@ -185,22 +184,35 @@ function App() {
   )
 }
 
+/* The public page. It is its own chunk, so a member's desk never downloads it. */
+const Landing = React.lazy(() => import('./landing'))
+const boot = <div className="page"><div className="empty"><div className="spinner" /></div></div>
+const landing = (props: React.ComponentProps<typeof Landing>) => (
+  <React.Suspense fallback={boot}><Landing {...props} /></React.Suspense>
+)
+/** `?landing` shows the public page to someone who is signed in, to look it over. */
+const previewLanding = new URLSearchParams(window.location.search).has('landing')
+
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <AuthGuard
-        client={lemmaClient}
-        appName={DEFAULT_TEAMMATE}
-        loadingFallback={<div className="page"><div className="empty"><div className="spinner" /></div></div>}
-        /* A visitor is never going to be let into somebody else's mail, so the
-           default "Request access" button only sets up a wait that ends in nothing.
-           Offer them the copy they actually want instead. */
-        accessRequestFallback={({ user }) => (
-          <CloneGate name={user?.name || user?.email || undefined} />
-        )}
-      >
-        <App />
-      </AuthGuard>
-    </QueryClientProvider>
+    {previewLanding ? landing({ member: true }) : (
+      <QueryClientProvider client={queryClient}>
+        <AuthGuard
+          client={lemmaClient}
+          appName={DEFAULT_TEAMMATE}
+          loadingFallback={boot}
+          /* Not signed in: say what this is, and offer a copy. */
+          unauthenticatedFallback={({ signIn }) => landing({ signIn })}
+          /* Signed in but not a member: nobody is going to let them into somebody else's
+             mail, so they get the same page and the same offer, not a request to wait on. */
+          accessRequestFallback={({ user, switchAccount }) => landing({
+            visitor: firstName(user?.name || user?.email?.split('@')[0] || 'Hello').replace(/^\w/, (m) => m.toUpperCase()),
+            onSwitch: () => void switchAccount(),
+          })}
+        >
+          <App />
+        </AuthGuard>
+      </QueryClientProvider>
+    )}
   </React.StrictMode>,
 )

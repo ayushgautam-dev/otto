@@ -84,6 +84,41 @@ and the other side now owes: close the chase with the message as evidence and op
 `them` / `awaiting_reply` commitment ("Waiting on Omar to pay Month 2"). Do not leave
 "Chase Omar" open after they have chased.
 
+### A commitment follows the matter, not the conversation
+A commitment is first seen in one conversation, but people carry the same matter on
+wherever they write next: a **new** email instead of a reply, a different thread, another
+of their mailboxes, a call. Every message you read is therefore checked against what is
+already open with **everybody on it** (`already_open`, each with its `id`), whichever
+conversation the open item is tied to. This matters most for mail the person sent
+themselves (`direction: "outbound"`): most people send from their own mail program, and
+what they send is the best evidence there is of what is no longer owed.
+
+Say what the message did to the open item, in `changes`:
+
+- **`settled`** — the message does what was owed, or shows it done. The person sent the
+  thing; the other side answered or delivered. `{"loop": "<id>", "action": "settled",
+  "reason": "You sent Omar the invoice on 9 Oct"}`.
+- **`moved`** — still open, but it now lives in this conversation. The person wrote a
+  fresh email that says what was to be said and is now waiting; the same request was made
+  again in a new thread; the next step changed hands. Give the message's `thread_ref` and
+  its time as `happened_at`, and say who owes the next step now: when the person has done
+  their part, it becomes `side: "them"`, `kind: "awaiting_reply"`, worded "Waiting on
+  <first name> to …". When the next step now sits with a different person from the one
+  the item was filed under, give that person's `person_email` too, so the item moves to
+  them and its wording and its owner agree. `{"loop": "<id>", "action": "moved", "reason": "You asked Dev
+  again in a new email on 9 Oct, Mira in copy", "thread_ref": "<this row's thread_ref>",
+  "happened_at": "<this row's occurred_at>", "obligation": "Waiting on Mira to restore
+  the quotas", "side": "them", "kind": "awaiting_reply"}`.
+
+An item marked `prepared: true` has a reply already written and waiting for the person's
+Send. If the message you are reading says what that reply was going to say, the person
+has sent it themselves: the item is `settled` or `moved`, never left as it was. Either
+change sets the prepared reply aside for you.
+
+`reason` is one plain sentence naming the message and its date; the person reads it.
+Leave an open item alone when the message merely involves the same people about
+something else. Being in touch is not the same as dealing with it.
+
 ### Much of the work never touches this inbox
 Plenty gets settled on WhatsApp, a phone call or in person: a group gets made, a spec is
 sent over chat, a meeting moves the relationship past an earlier ask. You will never see
@@ -417,10 +452,12 @@ lemma functions run mark_extracted       --data @marked.json    --output json
   "people":    [{"email": "priya@acme.com", "name": "Priya Shah", "role": "…", "company_domain": "acme.com",
                  "relationship": "prospect", "context": "…", "how_met": "…", "last_contact_at": "2026-01-12T09:30:00Z",
                  "track_slugs": []}],
+  "changes":   [{"loop": "<id from already_open>", "action": "settled", "reason": "You sent Omar the invoice on 9 Oct"}],
   "loops":     [{"person_email": "priya@acme.com", "side": "you", "kind": "reply_owed",
                  "obligation": "Send Priya the pricing sheet", "provenance": "her email of 12 Jan",
                  "source": "email", "opened_at": "2026-01-12T09:30:00Z", "due_at": null,
                  "thread_ref": "<the row's thread_ref>", "urgency": 1, "urgency_reason": "…",
+                 "topic": "<title of the topic it belongs under, from `topics`, or leave out>",
                  "track_slug": null, "draft_subject": null, "draft_body": null}],
   "tasks":     [{"title": "…", "detail": "…", "person_email": "…", "source": "email",
                  "opened_at": "…", "due_at": null, "thread_ref": "…", "urgency": 2}],
@@ -428,6 +465,17 @@ lemma functions run mark_extracted       --data @marked.json    --output json
                  "title": "…", "quote": "…", "source": "email", "happened_at": "…", "ref": "<thread_ref>"}]
 }
 ```
+
+**Somebody with no address.** A call note often names a person and gives no email. Use
+`"person_name": "Rahul Mehta"` in place of `person_email` (on a loop, a task, a timeline
+entry, and in `people` with `email` left out). The writer finds the person of that name,
+or keeps them by name until an address turns up. Give the fullest name the note has.
+Never drop a promise because nobody's address is known.
+
+**The topic it belongs under.** `topics` lists what is on the person's desk, by title. When
+a new commitment is plainly part of one of them (the same deal, the same hire, the same
+piece of work, even from a different person or in a new conversation), give that title as
+`topic`. When none fits, leave it out; it is grouped later.
 
 `relationship` is one of candidate, prospect, investor, vendor, partner, advisor, teammate,
 other. `track_slug` only means something if that tracker already exists. Whether to create one is
@@ -464,8 +512,11 @@ them the same way and let `source` and `kind` tell you what you are looking at.
    reaches the person's desk straight away and your hold on the rows is released.
 
 2. **Before you write anything, read `already_open`.** It lists the loops that are
-   already outstanding with these same people. **The same obligation must never become a
-   second row**, however differently it is worded. These are one obligation, not three:
+   already outstanding with everybody on these messages, each with its `id`, the
+   conversation it is tied to and whether a reply is `prepared`. A message that settles
+   or moves one of them goes in `changes` (see "A commitment follows the matter").
+   **The same obligation must never become a second row**, however differently it is
+   worded. These are one obligation, not three:
 
    > "Share the hiring decision with Alex" · "Share the next steps with Alex after
    > his interview" · "Decide next steps for Alex and let him know"
@@ -502,6 +553,12 @@ them the same way and let `source` and `kind` tell you what you are looking at.
    aloud and written down nowhere else, which makes these the highest-value rows you will
    ever read. Use `source: "call"` on the loop, provenance like "from the 12 Aug call",
    and put the **exact sentence** in the timeline `quote`.
+   **Who it was with:** a note usually lists only the person who took it. Its
+   `participants` therefore include the people invited to that meeting on the calendar
+   (marked `via: "calendar"`); they are who the note is with. Tie each promise to the
+   person it was made to or by, using their address from that list, or `person_name` when
+   the note names somebody the list does not have. Write the `timeline` entry for the
+   meeting against each person who was there, so it shows on their record.
 
 6. **Build the batch**: people (name/email/role from the signature, plus `relationship`),
    companies (domain), loops (obligation + provenance + `thread_ref` + `opened_at` +
@@ -544,18 +601,11 @@ them the same way and let `source` and `kind` tell you what you are looking at.
 
 - Precision over volume. Better 12 real loops than 40 noisy ones.
 - Never invent facts. Obligation and provenance must be grounded in the actual messages.
-- Pass emails, domains and track slugs — never uuids. The tool resolves the rest.
+- Pass emails, domains and track slugs — never uuids. The tool resolves the rest. The one
+  exception is the `id` of an open item, copied from `already_open` into `changes`.
 - Use the literal enum strings above. `side` is `you`/`them`/`neither`.
 - When in doubt about a track, leave it null. A wrong board card is worse than none.
 - You write only through `ingest_open_loops` and `mark_extracted`. You never email,
   never change config.
 - Always mark what you read, even the noise. An unmarked row is read again forever.
-
-
-
-
-
-
-
-
 

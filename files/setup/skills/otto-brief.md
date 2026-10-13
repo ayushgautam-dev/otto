@@ -1,11 +1,11 @@
 ---
 name: otto-brief
-description: "Compose the morning brief, and work out what to raise in a recurring meeting. Use for the daily brief run, before a meeting, or when asked what is coming up or what to cover with someone. Covers grounding every line in a real commitment and the once-a-day sending rule."
+description: "Compose the morning brief, work out what to raise in a recurring meeting, and write the short brief on somebody the person is about to meet for the first time. Use for the daily brief run, before a meeting, or when asked what is coming up, who someone is before a meeting, or what to cover with someone. Covers grounding every line in a real commitment or a named source, and the once-a-day sending rule."
 ---
 
 # Briefing
 
-Two jobs, same discipline: say only what is true, and only what is useful before the
+Three jobs, same discipline: say only what is true, and only what is useful before the
 person walks into something.
 
 ---
@@ -27,7 +27,10 @@ Once a day. Compose it, store it, send it — to the person themselves and nobod
      empty if nothing qualifies; never fill it to look busy.
    - `meetings` — one per meeting today: `time`, `title`, the join `link`, `people` (who
      is coming), and `owed` (for anyone attending with something outstanding, what it is,
-     stated specifically; empty when nothing is).
+     stated specifically; empty when nothing is). When somebody attending is being met
+     for the first time and has a brief (`people.research` is filled), put its first
+     line in `owed` in place of nothing: "First meeting. Head of Ops at Acme; she wrote
+     in about the pilot on 3 Oct." Never invent that line; with no brief, say nothing.
    - `ready` — each pending draft or document: who it is for and what it says.
    - `waiting` — what else is open on the person's side, by person.
    - `overdue` — oldest first, with how long in `tag` ("7 days late").
@@ -101,5 +104,70 @@ Build it from three things:
 anything the person would find obvious. If there is genuinely nothing worth raising, say
 that in one line. An honest empty agenda is more useful than a padded one.
 
+---
 
+## Before a first meeting
+
+Before a recurring meeting the person has "what to raise". Before a **first** meeting
+they need something else: a few lines on who is about to walk in. `first_meetings` lists
+the meetings coming up with somebody they have not really met (each with its `guests`),
+and says whether a paid lookup key is saved (`has_key`).
+
+Write one brief per guest and save it in that person's `people.research` (create the
+person first through `ingest_open_loops` if they are not on record yet: `email`, `name`,
+`company_domain`, `relationship: "other"` unless the mail shows what they are). Set
+`people.role` and `people.linkedin_url` too when you found them with a source.
+
+**Where the facts come from, in this order:**
+
+1. **The person's own mail and notes.** Read every message with this guest
+   (`interactions` whose `participants` hold their address, and the bodies): who wrote
+   first and when, who introduced them, what they asked for, what was agreed, their
+   signature (role, company, phone). This is the most reliable part and often the most
+   useful: *why this meeting exists*.
+2. **If `has_key` is true:** call `research_person` with the person's id. It writes what
+   it finds to `people.research`; read that, keep its facts, and write the brief over it.
+   A paid lookup gives a fuller profile (career, education, company size and funding), so
+   the brief may run longer, but only with what it actually returned.
+3. **Otherwise, the open web.** Search for the person with their company, and for the
+   company itself. Then **open the pages** and read them; a search result's snippet is
+   not a source. Use a page only when it is plainly about **this** person: the name
+   **and** the company or role from their email match. The company's own site, a profile
+   page that names that company, a talk or article that names both. A namesake at another
+   company is the commonest mistake here; if you cannot tell two people apart, say that
+   nothing certain was found and leave it out.
+
+**Rules that do not bend:**
+
+- **Every fact not read in the person's own mail carries the page it came from**, as a
+  link beside it. A fact with no page is not written.
+- **Never guess, infer or round up.** No "probably", no "likely leads", no seniority or
+  background worked out from a job title. What a page states, at the strength it states it.
+- **Work only.** Role, company, what the company does, what they have published or said
+  about the subject of this meeting. Nothing about family, health, home, age, politics or
+  religion, even where a page offers it.
+- **Short.** Without a paid key: about 120 words. With one: up to about 250. A brief that
+  takes longer to read than the first two minutes of the meeting has failed.
+- **If little is found, say so in one line** and give what the mail shows. A short honest
+  brief beats a padded one.
+- **Do not restate when the meeting is.** The desk shows its day and time beside the
+  brief, in the person's own timezone; the times you read in the ledger are UTC, and a
+  weekday worked out by hand is easy to get wrong. When a date from the mail matters
+  ("she wrote on 3 Oct"), give the day and month only: no weekday, no clock time.
+
+**The shape, in `people.research`, as markdown:**
+
+```
+**Who** — Head of Operations at Acme, there since 2023. [acme.com/team](https://…)
+**The company** — Acme runs same-day delivery for pharmacies in six cities. [acme.com](https://…)
+**Why this meeting** — She wrote on 3 Oct after Sam's introduction, asking how the pilot would work for 40 stores.
+**Worth asking** — How they handle returns today · Who else signs off · What a good first month looks like
+```
+
+"Why this meeting" comes from the mail and needs no link. "Worth asking" is at most three
+questions that follow from the lines above; leave it out when you have nothing specific.
+The first line must stand alone: it is what the morning brief quotes.
+
+Once a brief is written it is not rewritten at every run. Refresh it only when the person
+asks, or when a later message changes who the guest is.
 

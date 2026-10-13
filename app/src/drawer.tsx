@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from 'react'
 import { X, ExternalLink, MessageCircle, Maximize2, Minimize2, Paperclip, ChevronRight } from 'lucide-react'
+import { useCurrentUser } from 'lemma-sdk/react'
 import {
-  useSql, rev, lit, ageLabel, fmtDate, runFn, records,
+  client, useSql, rev, lit, ageLabel, fmtDate, fmtTime, runFn, records,
   type PersonRow, type LoopRow, type TimelineRow,
 } from './lib'
 import { Avatar, Markdown, Empty, Loading, useToast } from './ui'
@@ -26,6 +27,7 @@ function TabLabel({ t }: { t: NonNullable<SheetTarget> }) {
       : t.type === 'company' ? `select name as label from companies where id=${lit(t.id)}`
       : t.type === 'workstream' ? `select title as label from work_projects where id=${lit(t.id)}`
         : t.type === 'doc' ? `select title as label from deliverables where id=${lit(t.id)}`
+          : t.type === 'meeting' ? `select regexp_replace(subject, '^\\s*\\[[^\\]]*\\]\\s*', '') as label from interactions where id=${lit(t.id)}`
           : t.type === 'loop' ? `select coalesce(p.name, '') || '' as label from loops l left join people p on p.id=l.person_id where l.id=${lit(t.id)}`
             : null)
   if (t.type === 'lem') return <><span className="lem-dot sm" aria-hidden><i /></span>{tm()}</>
@@ -559,6 +561,139 @@ function WorkstreamPane({ tab }: { tab: Extract<SheetTarget, { type: 'workstream
   )
 }
 
+/* ---------------- a meeting ---------------- */
+
+/* A meeting opened from the day's calendar: what to know before walking in (the same
+   pane as the desk app). Somebody being met for the first time: the short brief on them,
+   or a way to have one written. A recurring meeting: what to raise. Anybody: what is open
+   between you. And once it has happened, what the notes say. */
+
+interface MeetRow { id: string; subject: string; occurred_at: string; participants?: unknown; thread_ref?: string | null; external_id?: string | null; [k: string]: unknown }
+interface GuestRow { id: string; name: string; email: string; role?: string | null; avatar_url?: string | null; research?: string | null; company?: string | null; met: number; [k: string]: unknown }
+
+function attendeesOf(v: unknown): { email: string; name: string }[] {
+  let a: unknown = v
+  if (typeof a === 'string') { try { a = JSON.parse(a) } catch { a = [] } }
+  if (!Array.isArray(a)) return []
+  return a.map((p) => ({ email: String((p as { email?: string })?.email ?? '').toLowerCase(), name: String((p as { name?: string })?.name ?? '') }))
+    .filter((p) => p.email)
+}
+
+const meetingTitle = (t?: string | null) => (t ?? '').replace(/^\s*\[[^\]]*\]\s*/, '').trim()
+
+function MeetingPane({ tab }: { tab: Extract<SheetTarget, { type: 'meeting' }> }) {
+  const { openSheet, version, bump } = useNav()
+  const askLem = useAskLem()
+  const { user } = useCurrentUser({ client })
+  const myDomain = (((user as { email?: string } | undefined)?.email ?? '').split('@')[1] ?? '').toLowerCase()
+  const mq = useSql<MeetRow>(rev(
+    `select id, subject, occurred_at, participants, thread_ref, external_id from interactions where id=${lit(tab.id)} limit 1`, version))
+  const m = mq.items[0]
+  const invited = attendeesOf(m?.participants)
+  const inList = invited.length ? invited.map((p) => lit(p.email)).join(',') : null
+  const guests = useSql<GuestRow>(rev(inList
+    ? `select p.id, p.name, p.email, p.role, p.avatar_url, p.research, coalesce(c.name,'') as company,
+              (select count(*) from interactions e where e.source='calendar' and e.occurred_at < now()
+                 and e.id <> ${lit(tab.id)} and e.participants::text ilike '%' || p.email || '%') as met
+       from people p left join companies c on c.id=p.company_id where lower(p.email) in (${inList})`
+    : null, version))
+  const loops = useSql<LoopRow>(rev(inList
+    ? `select l.id, l.side, l.kind, l.obligation, l.provenance, l.opened_at, l.due_at, l.urgency, l.urgency_reason,
+              l.thread_ref, l.person_id, l.source, coalesce(p.name,'') as person, p.avatar_url,
+              (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft
+       from loops l join people p on p.id=l.person_id
+       where lower(p.email) in (${inList}) and l.status='open' order by coalesce(l.urgency,2)`
+    : null, version))
+  const series = useSql<{ id: string; raise_next?: string }>(rev(m
+    ? `select id, raise_next from work_projects where coalesce(archived,false)=false and kind='meeting'
+         and lower(title)=lower(${lit(meetingTitle(m.subject))}) limit 1`
+    : null, version)).items[0]
+  const note = useSql<{ id: string; summary?: string | null }>(rev(
+    `select id, summary from interactions where meeting_id=${lit(tab.id)} and summary is not null limit 1`, version)).items[0]
+
+  if (mq.isLoading && !m) return <div className="pane-body"><Loading /></div>
+  if (!m) return <div className="pane-body"><Empty line="That meeting is no longer on your calendar." /></div>
+
+  const title = meetingTitle(m.subject) || 'Meeting'
+  const when = new Date(m.occurred_at)
+  const ahead = when.getTime() > Date.now()
+  const day = when.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })
+  const recurring = !!m.thread_ref && !!m.external_id && m.thread_ref !== m.external_id
+    && m.thread_ref.split(':').pop() !== m.external_id.split(':').pop()
+  const byEmail = new Map(guests.items.map((g) => [g.email.toLowerCase(), g]))
+  const outside = invited.filter((p) => !myDomain || p.email.split('@')[1] !== myDomain)
+  const briefed = guests.items.filter((g) => (g.research ?? '').trim() && Number(g.met) === 0)
+  const unbriefed = recurring ? [] : outside.filter((p) => {
+    const g = byEmail.get(p.email)
+    return !(g?.research ?? '').trim() && Number(g?.met ?? 0) === 0
+  })
+  const firstOf = (n: string) => n.split(' ')[0] || n
+  const raise = String(series?.raise_next ?? '').trim()
+
+  return (
+    <div className="pane-body">
+      <div className="pp-head">
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="nm">{title}</div>
+          <div className="rl">{day}, {fmtTime(m.occurred_at)}{recurring ? ' · Recurring' : ''}</div>
+        </div>
+      </div>
+
+      {briefed.map((g) => (
+        <div key={g.id} className="raise" style={{ marginTop: 12 }}>
+          <div className="cap" style={{ marginBottom: 7 }}>Before you meet {firstOf(g.name)}</div>
+          <Markdown text={String(g.research)} />
+        </div>
+      ))}
+      {ahead && unbriefed.length > 0 && briefed.length === 0 && (
+        <div className="raise" style={{ marginTop: 12 }}>
+          <div className="cap" style={{ marginBottom: 7 }}>
+            You haven’t met {unbriefed.map((p) => firstOf(byEmail.get(p.email)?.name || p.name || p.email.split('@')[0])).slice(0, 2).join(' or ')} before
+          </div>
+          <p className="why" style={{ margin: '0 0 10px' }}>{tm()} can write a few lines on who they are and why you are meeting.</p>
+          <button className="btn" onClick={() => askLem(
+            `Write the short brief for my meeting "${title}" on ${day}. Run first_meetings with {"meeting_id": "${m.id}"} and follow the brief skill's "Before a first meeting" section. Then tell me in one line that it is ready.`,
+            { key: `meeting:${m.id}`, title, about: `their meeting "${title}" on ${day} (calendar row ${m.id} in interactions)` })}>
+            Prepare a brief
+          </button>
+        </div>
+      )}
+      {raise && raise !== 'Nothing worth raising.' && (
+        <div className="raise" style={{ marginTop: 12 }}>
+          <div className="cap" style={{ marginBottom: 7 }}>Raise this time</div>
+          <Markdown text={raise} />
+        </div>
+      )}
+      {note?.summary && (
+        <>
+          <div className="cap" style={{ marginTop: 18 }}>From the notes</div>
+          <p className="why" style={{ marginTop: 4 }}>{note.summary}</p>
+        </>
+      )}
+
+      <div className="cap" style={{ marginTop: 18 }}>Open with them</div>
+      {loops.items.length ? <ItemList loops={loops.items} onChange={bump} />
+        : <Empty line={invited.length ? 'Nothing open with anyone in this meeting.' : 'Nobody else is on this one.'} />}
+
+      {invited.length > 0 && (
+        <>
+          <div className="cap" style={{ marginTop: 18 }}>Who is coming</div>
+          {invited.map((p) => {
+            const g = byEmail.get(p.email)
+            return g
+              ? <button key={p.email} className="row" onClick={() => openSheet({ type: 'person', id: g.id })}>
+                  <Avatar name={g.name} src={g.avatar_url} /><span className="nm">{g.name}</span>
+                </button>
+              : <div key={p.email} className="row">
+                  <Avatar name={p.name || p.email} /><span className="nm">{p.name || p.email}</span>
+                </div>
+          })}
+        </>
+      )}
+    </div>
+  )
+}
+
 /* ---------------- a document ---------------- */
 
 function DocPane({ tab }: { tab: Extract<SheetTarget, { type: 'doc' }> }) {
@@ -613,6 +748,7 @@ export function Pane() {
             {t.type === 'workstream' && <WorkstreamPane tab={t} />}
             {t.type === 'loop' && <LoopPane tab={t} />}
             {t.type === 'doc' && <DocPane tab={t} />}
+            {t.type === 'meeting' && <MeetingPane tab={t} />}
           </div>
         )
       })}

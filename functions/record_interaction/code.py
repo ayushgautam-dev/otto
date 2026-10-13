@@ -59,6 +59,7 @@ class RecordInput(BaseModel):
 
 class RecordResult(BaseModel):
     created: int = 0
+    linked: int = 0           # meeting notes tied to the calendar meeting they record
     skipped_duplicate: int = 0
     prefiltered: int = 0      # bulk mail filed as read without a reading pass
     updated: int = 0          # meetings that moved or were renamed
@@ -172,6 +173,96 @@ def _bulk_mail(item: "InteractionIn", email: str) -> bool:
     return bool(_MACHINE.search(email or "")) and bool(_LIST_FOOTER.search(item.body or ""))
 
 
+# ---- A note belongs to a meeting. ----
+# The calendar knows who was invited; the note knows what was said. A note-taking tool
+# usually lists only the person who took the note, so on its own a note cannot say who
+# the promise in it was made to. Every note is therefore tied to the calendar meeting it
+# records (`interactions.meeting_id`), whichever of the two arrived first, and takes that
+# meeting's attendees when it names nobody itself. Everything downstream — the reader,
+# a person's history, the brief before the next meeting — reads who it was with from
+# that one link.
+LINK_WINDOW_MIN = 75      # a note with the meeting's own title, started this close to it
+LINK_EXACT_MIN = 15       # a note under another title: only if it began when the meeting did
+
+
+def _dt(value) -> datetime | None:
+    try:
+        d = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def _words(text: str | None) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 2}
+
+
+def _same_meeting(note: dict, note_at: datetime, meeting: dict, meeting_at: datetime) -> bool:
+    """Is this note the record of that meeting? Near in time is not enough: an unplanned
+    call an hour after the daily stand-up is not the stand-up. Either the note carries the
+    meeting's title (the note-taker copies it from the calendar) and began within the
+    window, or it began at the meeting's own start."""
+    gap = abs((meeting_at - note_at).total_seconds())
+    if gap <= LINK_EXACT_MIN * 60:
+        return True
+    return gap <= LINK_WINDOW_MIN * 60 and bool(_words(note.get("subject")) & _words(meeting.get("subject")))
+
+
+def _link_notes(pod, rows, res: "RecordResult") -> None:
+    try:
+        notes = rows(
+            "select id, occurred_at, subject, participants, person_id, meeting_id from interactions "
+            "where source in ('granola', 'meet') "
+            "and occurred_at > now() - interval '45 days' order by occurred_at desc limit 200")
+    except Exception:
+        return                      # a pod whose ledger has no meeting_id column yet
+    if not notes:
+        return
+    meetings = rows(
+        "select id, occurred_at, subject, participants, person_id, company_id from interactions "
+        "where source = 'calendar' and occurred_at > now() - interval '46 days' "
+        "and occurred_at < now() + interval '1 day' order by occurred_at desc limit 800")
+    timed = [(m, _dt(m.get("occurred_at"))) for m in meetings]
+    timed = [(m, at) for m, at in timed if at]
+    by_id = {str(m["id"]): (m, at) for m, at in timed}
+    for n in notes:
+        at = _dt(n.get("occurred_at"))
+        if not at:
+            continue
+        if n.get("meeting_id"):
+            # Tied already. Keep it, unless the meeting has since moved or been renamed so
+            # that it no longer holds; then let it go rather than leave a wrong pairing.
+            was = by_id.get(str(n["meeting_id"]))
+            if not was or _same_meeting(n, at, was[0], was[1]):
+                continue
+            try:
+                pod.records.update("interactions", n["id"], {"meeting_id": None})
+            except Exception:
+                continue
+            # ...and look again below: the right meeting may have been recorded since
+        near = [(m, abs((mat - at).total_seconds())) for m, mat in timed if _same_meeting(n, at, m, mat)]
+        if not near:
+            continue
+        # two meetings back to back: the one whose title the note shares, then the nearer
+        title = _words(n.get("subject"))
+        best = max(near, key=lambda mg: (len(title & _words(mg[0].get("subject"))), -mg[1]))[0]
+        patch: dict = {"meeting_id": best["id"]}
+        named = [p for p in (n.get("participants") or []) if isinstance(p, dict) and p.get("email")]
+        invited = [p for p in (best.get("participants") or []) if isinstance(p, dict) and p.get("email")]
+        if not named and invited:
+            patch["participants"] = [dict(p, via="calendar") for p in invited]
+            if not n.get("person_id") and len(invited) == 1 and best.get("person_id"):
+                patch["person_id"] = best["person_id"]
+                if best.get("company_id"):
+                    patch["company_id"] = best["company_id"]
+        try:
+            pod.records.update("interactions", n["id"], patch)
+            res.linked += 1
+        except Exception as exc:
+            res.errors.append(f"could not tie a note to its meeting: {str(exc)[:120]}")
+            return                  # most likely the column is missing: do not retry per row
+
+
 async def record_interaction(ctx: FunctionContext, data: RecordInput) -> RecordResult:
     pod = Pod.from_env()
     res = RecordResult()
@@ -275,6 +366,12 @@ async def record_interaction(ctx: FunctionContext, data: RecordInput) -> RecordR
     if batch:
         pod.records.bulk_create("interactions", batch)
         res.created = len(batch)
+
+    # A meeting or a note has come through (new, or seen again): tie notes to their
+    # meetings. Seen-again counts, so notes recorded before this link existed are tied
+    # the next time the calendar is read. With nothing left to tie it is one small query.
+    if any(_norm_kind(i.kind) == "meeting" for i in data.interactions):
+        _link_notes(pod, rows, res)
 
     if data.prune and data.prune.keep:
         pr = data.prune

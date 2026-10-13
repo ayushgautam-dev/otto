@@ -25,7 +25,7 @@ interface App { id: string; label: string; why: string; via: 'pod' | 'native'; c
 const SOURCES: App[] = [
   { id: 'gmail', label: 'Gmail', why: 'Threads, who spoke last, and what was asked of you.', via: 'pod' },
   { id: 'google_calendar', label: 'Google Calendar', why: 'Who you’re meeting, and what was agreed but never booked.', via: 'pod' },
-  { id: 'outlook', label: 'Outlook', why: 'Mail and calendar, for work that lives in Microsoft 365.', via: 'pod' },
+  { id: 'outlook', label: 'Outlook', why: 'Mail and calendar, for work that lives in Microsoft 365. Connect it if your Teams meetings sit on a Microsoft calendar: they are not in Google Calendar, even when your phone shows the two together.', via: 'pod' },
   { id: 'granola', label: 'Granola', why: 'Meeting notes and action items — where a promise made out loud gets written down.', via: 'pod' },
   { id: 'googlemeet', label: 'Google Meet', why: 'Call transcripts, where Meet recorded one.', via: 'pod' },
   { id: 'slack', label: 'Slack', why: 'The channels you invited the app to, where the day’s asks land.', via: 'native', connector: 'slack' },
@@ -139,7 +139,12 @@ export function Profile({ name, email, onClose }: { name: string; email: string;
         try {
           const s = await readStatus(org)
           setStatus(s)
-          if (s[app.id] === 'connected') { toast(`${app.label} connected`); return }
+          if (s[app.id] === 'connected') {
+            toast(app.id === 'granola' ? `${app.label} connected. Your last few weeks of notes are loading` : `${app.label} connected`)
+            // the rest of the app learns of it now, and loads its history (see accounts.ts)
+            await accounts.refresh()
+            return
+          }
         } catch { /* keep waiting */ }
       }
       toast('Still waiting on that one — press refresh once you’ve signed in')

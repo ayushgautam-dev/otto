@@ -34,6 +34,36 @@ export const HOME: ChatScope = {
   title: '',
 }
 
+/* The main conversation is a day's conversation, not one that runs for ever.
+   It used to live under the single key "home", so whatever somebody typed on day thirty
+   was appended to the very first chat they ever had: slow to open, and Lem answering
+   with a month of unrelated turns behind it. Now each day starts a fresh one; earlier
+   days stay in the Conversations list under their first line. Nothing is lost by this:
+   what Lem knows about the person lives in the pod, not in the chat. Conversations
+   opened from an item, a person or a piece of work keep their own key and are unchanged. */
+const pad = (n: number) => String(n).padStart(2, '0')
+const dayKey = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+export const todaysHome = (): ChatScope => ({ ...HOME, key: `home:${dayKey()}` })
+const isHome = (key: string) => key === 'home' || key.startsWith('home:')
+const CARRY_ON_MS = 2 * 3600_000   // a chat that crosses midnight is not cut in two
+
+/** The main conversation to open now: today's if there is one (or one used in the last
+ *  couple of hours), otherwise a new one. */
+async function currentHome(): Promise<ChatScope> {
+  try {
+    const rows = await sql<{ scope_key: string; title: string; last_used_at: string }>(
+      `select scope_key, coalesce(title,'') as title, last_used_at from chat_threads
+       where scope_key = 'home' or scope_key like 'home:%'
+       order by last_used_at desc nulls last limit 1`)
+    const t = rows[0]
+    if (t?.last_used_at) {
+      const at = new Date(t.last_used_at)
+      if (dayKey(at) === dayKey() || Date.now() - at.getTime() < CARRY_ON_MS) return { ...HOME, key: t.scope_key, title: t.title }
+    }
+  } catch { /* no bookmark to read: start today's */ }
+  return todaysHome()
+}
+
 interface LemApi {
   /** open on a scope and send this message */
   ask: (seed: string, scope?: Partial<ChatScope>) => void
@@ -77,20 +107,36 @@ export function LemProvider({ children }: { children: ReactNode }) {
   const [scope, setScope] = useState<ChatScope | null>(null)
   const [seed, setSeed] = useState<Seed>(null)
   const n = useRef(0)
+  // the main conversation for now, and when the dock was last used (for a tab left open overnight)
+  const main = useRef<ChatScope>(todaysHome())
+  const touched = useRef(Date.now())
+  useEffect(() => {
+    const look = () => { if (!document.hidden) void currentHome().then((s) => { main.current = s }) }
+    look()
+    document.addEventListener('visibilitychange', look)
+    return () => document.removeEventListener('visibilitychange', look)
+  }, [])
+  /** Carry on in whatever is open, unless that is a main conversation from an earlier day. */
+  const carryOn = (cur: ChatScope | null): ChatScope => {
+    const stale = !!cur && isHome(cur.key) && cur.key !== main.current.key
+      && dayKey(new Date(touched.current)) !== dayKey() && Date.now() - touched.current > CARRY_ON_MS
+    touched.current = Date.now()
+    return !cur || stale ? main.current : cur
+  }
 
   const ask = useCallback((text: string, s?: Partial<ChatScope>) => {
     // a named scope wins; otherwise carry on in whichever conversation was last open
-    setScope((cur) => (s ? { ...HOME, ...s } : cur ?? HOME))
+    setScope((cur) => (s ? { ...HOME, ...s } : carryOn(cur)))
     setSeed({ text, n: ++n.current })
     setOpen(true)
   }, [])
   const write = useCallback((text: string, s?: Partial<ChatScope>) => {
-    setScope((cur) => (s ? { ...HOME, ...s } : cur ?? HOME))
+    setScope((cur) => (s ? { ...HOME, ...s } : carryOn(cur)))
     setSeed({ text, n: ++n.current })
   }, [])
   const show = useCallback((s?: Partial<ChatScope>) => {
     if (s) setScope({ ...HOME, ...s })
-    else setScope((cur) => cur ?? HOME)
+    else setScope((cur) => carryOn(cur))
     setOpen(true)
   }, [])
   const collapse = useCallback(() => setOpen(false), [])
@@ -99,7 +145,7 @@ export function LemProvider({ children }: { children: ReactNode }) {
     const on = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
         e.preventDefault()
-        if (isOpen) setOpen(false); else { setScope((cur) => cur ?? HOME); setOpen(true) }
+        if (isOpen) setOpen(false); else { setScope((cur) => carryOn(cur)); setOpen(true) }
       }
     }
     window.addEventListener('keydown', on)
@@ -108,15 +154,15 @@ export function LemProvider({ children }: { children: ReactNode }) {
 
   return (
     <Ctx.Provider value={{ ask, write, show, collapse, isOpen }}>
-      <DockState.Provider value={{ scope, seed, setScope, isOpen, setOpen }}>
+      <DockState.Provider value={{ scope, seed, setScope, isOpen, setOpen, home: () => main.current }}>
         {children}
       </DockState.Provider>
     </Ctx.Provider>
   )
 }
 
-interface Dock { scope: ChatScope | null; seed: Seed; setScope: (s: ChatScope) => void; isOpen: boolean; setOpen: (v: boolean) => void }
-const DockState = createContext<Dock>({ scope: null, seed: null, setScope: () => {}, isOpen: false, setOpen: () => {} })
+interface Dock { scope: ChatScope | null; seed: Seed; setScope: (s: ChatScope) => void; isOpen: boolean; setOpen: (v: boolean) => void; home: () => ChatScope }
+const DockState = createContext<Dock>({ scope: null, seed: null, setScope: () => {}, isOpen: false, setOpen: () => {}, home: todaysHome })
 
 /* ---------------- context from Focus ---------------- */
 
@@ -128,14 +174,16 @@ function useFocusContext() {
       : f.type === 'company' ? `select name as label from companies where id=${lit(f.id)}`
         : f.type === 'doc' ? `select title as label from deliverables where id=${lit(f.id)}`
           : f.type === 'workstream' ? `select title as label from work_projects where id=${lit(f.id)}`
-            : `select obligation as label from loops where id=${lit(f.id)}`
+            : f.type === 'meeting' ? `select subject as label from interactions where id=${lit(f.id)}`
+              : `select obligation as label from loops where id=${lit(f.id)}`
     : null)
   if (!f) return null
   const label = q.items[0]?.label ?? ''
   const what = f.type === 'loop' ? `the commitment "${label}" (loop_id ${f.id})`
     : f.type === 'doc' ? `the document "${label}" (deliverables id ${f.id})`
       : f.type === 'workstream' ? `the workstream "${label}" (work_project_id ${f.id})`
-        : `${label} (${f.type}_id ${f.id})`
+        : f.type === 'meeting' ? `their meeting "${label}" (calendar row ${f.id} in interactions)`
+          : `${label} (${f.type}_id ${f.id})`
   return { key: `${f.type}:${f.id}`, label, what }
 }
 
@@ -191,8 +239,8 @@ function ModeSwitch({ mode, setMode }: { mode: 'ask' | 'do'; setMode: (m: 'ask' 
 export function LemDock() {
   const dock = useContext(DockState)
   const { seed, setScope, isOpen, setOpen } = dock
-  // opened before anything named a conversation: carry on in the main one
-  const scope = dock.scope ?? (isOpen ? HOME : null)
+  // opened before anything named a conversation: carry on in today's main one
+  const scope = dock.scope ?? (isOpen ? dock.home() : null)
   const { ask } = useLem()
   const { version } = useNav()
   const [text, setText] = useState('')
@@ -502,7 +550,7 @@ function Chat({ scope, seed, onRunning, active }: {
     if (convId) { void remember(scope.key, convId, scope.title); return convId }
     const c = await client.conversations.createForAgent('pod_default') as { id: string }
     setConvId(c.id)
-    const title = scope.key.startsWith('home') ? firstText.replace(/^Please do this: /, '').replace(/\n[\s\S]*$/, '').slice(0, 60) : scope.title
+    const title = isHome(scope.key) ? firstText.replace(/^Please do this: /, '').replace(/\n[\s\S]*$/, '').slice(0, 60) : scope.title
     void remember(scope.key, c.id, title)
     return c.id
   }

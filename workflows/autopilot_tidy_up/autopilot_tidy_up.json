@@ -1,5 +1,5 @@
 {
-  "description": "Tidy Up \u2014 closes what the inbox shows was already handled, retires arrangements a later one replaced, collapses a thread listed twice, and ages out anything untouched for a month. Runs every weekday evening.",
+  "description": "Tidy Up \u2014 closes what the inbox shows was already handled, retires arrangements a later one replaced, collapses a thread listed twice, and ages out anything untouched for a month. Runs every weekday evening. Then takes a second look at anything that has since moved on in a different conversation.",
   "edges": [
     {
       "id": "e1",
@@ -8,9 +8,39 @@
       "target": "tidy"
     },
     {
-      "id": "e2",
+      "id": "s0",
       "label": null,
       "source": "tidy",
+      "target": "look"
+    },
+    {
+      "id": "s1",
+      "label": null,
+      "source": "look",
+      "target": "any"
+    },
+    {
+      "id": "s2",
+      "label": null,
+      "source": "any",
+      "target": "end"
+    },
+    {
+      "id": "s3",
+      "label": null,
+      "source": "any",
+      "target": "check"
+    },
+    {
+      "id": "s4",
+      "label": null,
+      "source": "check",
+      "target": "looked"
+    },
+    {
+      "id": "s5",
+      "label": null,
+      "source": "looked",
       "target": "end"
     }
   ],
@@ -53,6 +83,60 @@
       },
       "id": "tidy",
       "label": "Retire, collapse and age out",
+      "position": null,
+      "type": "FUNCTION"
+    },
+    {
+      "config": {
+        "function_name": "second_look",
+        "input_mapping": {}
+      },
+      "id": "look",
+      "label": "Anything moved elsewhere?",
+      "position": null,
+      "type": "FUNCTION"
+    },
+    {
+      "config": {
+        "rules": [
+          {
+            "condition": "look.any",
+            "next_node_id": "check"
+          }
+        ]
+      },
+      "id": "any",
+      "label": "Worth a second look?",
+      "position": null,
+      "type": "DECISION"
+    },
+    {
+      "config": {
+        "agent_name": "pod_default",
+        "input_mapping": {
+          "message": {
+            "type": "literal",
+            "value": "Some open commitments have had something happen since, in a conversation other than the one they are tied to. Take a second look at exactly those, and nothing else. Follow your writing rules in /memory/AGENTS.md. Do not read function source or survey the pod.\n\n1. `lemma functions run second_look --output json > look.json`. Each entry in `items` is one open commitment: its `id`, what is owed, who by (`side`), the person, when it opened, the conversation it is tied to (`thread_ref`), whether a reply is already `prepared` for it, and `later`: what has happened with that same person since, elsewhere, oldest first, one line each. When a line's summary is not enough to judge, read the message itself (`lemma files cat <body_ref>`); for a meeting note always read the note, because the detail that settles something is usually one line in it.\n\n2. Decide each commitment, one of three ways:\n   SETTLED: something later shows it was done, answered, or overtaken. Overtaken counts: the thing promised has visibly moved on to its next stage (you owed a draft agreement and a later note says their lawyer is reviewing it; you owed a time and the meeting has since happened; you owed a group chat and a different one was agreed instead). Do not wait for a message that says 'done' in so many words.\n   MOVED: it is still open, but the matter now lives in another conversation. The person wrote a new email that says what the prepared reply was going to say; the same request was made again in a fresh thread; the other side answered somewhere else and the next step changed hands. Say which conversation it carries on in (that later line's `thread_ref`) and when (`happened_at`, that message's time). Reword `obligation` if what is owed is now different, and set `side` and `kind` to who owes the next step: when the person has now done their part and is waiting, it becomes side 'them', kind 'awaiting_reply', worded 'Waiting on <first name> to ...'.\n   LEAVE: nothing later touches it. Most will be this. Never settle something only because it is old or because the person has merely been in touch about other things.\n\n3. Write every SETTLED and MOVED verdict in ONE call: save changes.json as {\"changes\":[{\"loop\":\"<id>\",\"action\":\"settled\",\"reason\":\"<one plain sentence naming what settled it and its date>\"},{\"loop\":\"<id>\",\"action\":\"moved\",\"reason\":\"<one plain sentence: what happened and when>\",\"thread_ref\":\"<the later conversation>\",\"happened_at\":\"<that message's time>\",\"obligation\":\"<only if it changed>\",\"side\":\"them\",\"kind\":\"awaiting_reply\"}]} and run `lemma functions run ingest_open_loops --data @changes.json --output json`. That call closes or moves the commitment and sets aside any reply prepared for the old state; do not edit `loops` or `drafts` yourself.\n\n4. For every commitment you settled or moved, bring that person's `context` (and their company's) up to date in the same breath, so it no longer says the old thing is owed, and if a topic's summary in `situations` now reads wrong, rewrite it (two sentences, 220 characters at most).\n\nDo not open new commitments here and do not send anything. Reply with three numbers only: settled, moved, left."
+          }
+        }
+      },
+      "id": "check",
+      "label": "Second look",
+      "position": null,
+      "type": "AGENT"
+    },
+    {
+      "config": {
+        "function_name": "second_look",
+        "input_mapping": {
+          "mark": {
+            "type": "literal",
+            "value": true
+          }
+        }
+      },
+      "id": "looked",
+      "label": "Remember the look",
       "position": null,
       "type": "FUNCTION"
     },

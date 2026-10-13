@@ -21,6 +21,13 @@
         ],
         "resource_name": "record_interaction",
         "resource_type": "function"
+      },
+      {
+        "permission_ids": [
+          "workflow.execute"
+        ],
+        "resource_name": "autopilot_meeting_briefs",
+        "resource_type": "workflow"
       }
     ]
   },

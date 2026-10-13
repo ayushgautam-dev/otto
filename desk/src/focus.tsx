@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from 'react'
 import { X, Maximize2, Minimize2, MessageCircle, Sparkles, Mail, NotebookPen, CalendarDays, Layers, FileText } from 'lucide-react'
+import { useCurrentUser } from 'lemma-sdk/react'
 import {
-  useSql, rev, lit, ageLabel, fmtDate, records, isGmailThread,
+  client, useSql, rev, lit, ageLabel, fmtDate, fmtTime, cleanTitle, records, isGmailThread,
   type PersonRow, type LoopRow, type TimelineRow,
 } from './lib'
 import { Avatar, Logo, Markdown, Empty, Loading, Orb } from './ui'
@@ -24,6 +25,7 @@ function tabSql(f: Focus): string {
   if (f.type === 'company') return `select name as label, domain from companies where id=${lit(f.id)}`
   if (f.type === 'doc') return `select title as label from deliverables where id=${lit(f.id)}`
   if (f.type === 'workstream') return `select w.title as label, c.domain from work_projects w left join companies c on c.id=w.company_id where w.id=${lit(f.id)}`
+  if (f.type === 'meeting') return `select subject as label from interactions where id=${lit(f.id)}`
   return `select obligation as label, side from loops where id=${lit(f.id)}`
 }
 
@@ -32,8 +34,8 @@ function TabHandle({ f, on, onPick, onClose }: { f: Focus; on: boolean; onPick: 
   const { version } = useNav()
   const q = useSql<TabInfo>(rev(tabSql(f), version))
   const t = q.items[0]
-  const label = t?.label ?? '…'
-  const face = f.type === 'person' ? <Avatar name={label} src={t?.avatar_url} size="xs" />
+  const label = f.type === 'meeting' ? cleanTitle(t?.label) || '…' : t?.label ?? '…'
+  const face = f.type === 'meeting' ? <span className="tab-ic"><CalendarDays size={13} /></span> : f.type === 'person' ? <Avatar name={label} src={t?.avatar_url} size="xs" />
     : f.type === 'company' ? <Logo name={label} domain={t?.domain} />
       : f.type === 'workstream' ? (t?.domain ? <Logo name={label} domain={t.domain} /> : <span className="tab-ic"><Layers size={13} /></span>)
         : f.type === 'doc' ? <span className="tab-ic"><FileText size={13} /></span>
@@ -489,6 +491,145 @@ function WorkstreamFocus({ f }: { f: Extract<Focus, { type: 'workstream' }> }) {
   )
 }
 
+/* ---------------- a meeting ---------------- */
+
+/* A meeting opened from the day's calendar: what to know before walking in.
+   - somebody being met for the first time: the short brief on them (who they are, why the
+     meeting exists, what is worth asking), or a way to have one written;
+   - a recurring meeting: what to raise this time;
+   - anybody: what is open between you;
+   - and once it has happened, what the notes say.
+   Who the meeting is with comes from the calendar; the brief lives on the person. */
+
+interface MeetRow { id: string; subject: string; occurred_at: string; participants?: unknown; thread_ref?: string | null; external_id?: string | null; [k: string]: unknown }
+interface GuestRow { id: string; name: string; email: string; role?: string | null; avatar_url?: string | null; research?: string | null; company?: string | null; met: number; [k: string]: unknown }
+
+function attendeesOf(v: unknown): { email: string; name: string }[] {
+  let a: unknown = v
+  if (typeof a === 'string') { try { a = JSON.parse(a) } catch { a = [] } }
+  if (!Array.isArray(a)) return []
+  return a.map((p) => ({ email: String((p as { email?: string })?.email ?? '').toLowerCase(), name: String((p as { name?: string })?.name ?? '') }))
+    .filter((p) => p.email)
+}
+
+function MeetingFocus({ f }: { f: Extract<Focus, { type: 'meeting' }> }) {
+  const { version, bump, push } = useNav()
+  const lem = useLem()
+  const { user } = useCurrentUser({ client })
+  const myDomain = (((user as { email?: string } | undefined)?.email ?? '').split('@')[1] ?? '').toLowerCase()
+  const mq = useSql<MeetRow>(rev(
+    `select id, subject, occurred_at, participants, thread_ref, external_id from interactions where id=${lit(f.id)} limit 1`, version))
+  const m = mq.items[0]
+  const invited = attendeesOf(m?.participants)
+  const inList = invited.length ? invited.map((p) => lit(p.email)).join(',') : null
+  const guests = useSql<GuestRow>(rev(inList
+    ? `select p.id, p.name, p.email, p.role, p.avatar_url, p.research, coalesce(c.name,'') as company,
+              (select count(*) from interactions e where e.source='calendar' and e.occurred_at < now()
+                 and e.id <> ${lit(f.id)} and e.participants::text ilike '%' || p.email || '%') as met
+       from people p left join companies c on c.id=p.company_id where lower(p.email) in (${inList})`
+    : null, version))
+  const loops = useSql<LoopRow>(rev(inList
+    ? `select l.id, l.side, l.kind, l.obligation, l.provenance, l.opened_at, l.due_at, l.urgency, l.urgency_reason,
+              l.thread_ref, l.person_id, l.source, coalesce(p.name,'') as person, p.avatar_url,
+              (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft
+       from loops l join people p on p.id=l.person_id
+       where lower(p.email) in (${inList}) and l.status='open' order by coalesce(l.urgency,2)`
+    : null, version))
+  // a recurring meeting has its own "what to raise"
+  const series = useSql<{ id: string; raise_next?: string }>(rev(m
+    ? `select id, raise_next from work_projects where coalesce(archived,false)=false and kind='meeting'
+         and lower(title)=lower(${lit(cleanTitle(m.subject))}) limit 1`
+    : null, version)).items[0]
+  // what was said, once it has happened (the note tied to this meeting)
+  const note = useSql<{ id: string; summary?: string | null }>(rev(
+    `select id, summary from interactions where meeting_id=${lit(f.id)} and summary is not null limit 1`, version)).items[0]
+
+  if (mq.isLoading && !m) return <div className="focus-body"><Loading rows={5} /></div>
+  if (!m) return <div className="focus-body"><Empty line="That meeting is no longer on your calendar." /></div>
+
+  const title = cleanTitle(m.subject) || 'Meeting'
+  const when = new Date(m.occurred_at)
+  const ahead = when.getTime() > Date.now()
+  const day = when.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })
+  const recurring = !!m.thread_ref && !!m.external_id && m.thread_ref !== m.external_id
+    && m.thread_ref.split(':').pop() !== m.external_id.split(':').pop()
+  const byEmail = new Map(guests.items.map((g) => [g.email.toLowerCase(), g]))
+  const outside = invited.filter((p) => !myDomain || p.email.split('@')[1] !== myDomain)
+  const briefed = guests.items.filter((g) => (g.research ?? '').trim() && Number(g.met) === 0)
+  // somebody outside, never met, with nothing written about them yet
+  const unbriefed = recurring ? [] : outside.filter((p) => {
+    const g = byEmail.get(p.email)
+    return !(g?.research ?? '').trim() && Number(g?.met ?? 0) === 0
+  })
+  const firstOf = (n: string) => n.split(' ')[0] || n
+
+  return (
+    <div className="focus-body">
+      <div className="hero">
+        <span className="ws-mark"><CalendarDays size={26} /></span>
+        <div className="hero-t">
+          <h2>{title}</h2>
+          <div className="hero-s">{day}, {fmtTime(m.occurred_at)}{recurring && <><span className="sep">·</span>Recurring</>}</div>
+        </div>
+        <button className="btn line sm" onClick={() => lem.show({
+          key: `meeting:${m.id}`, title, about: `their meeting "${title}" on ${day} (calendar row ${m.id} in interactions)`,
+        })}><MessageCircle size={13} /> Ask {tm()}</button>
+      </div>
+
+      {briefed.map((g) => (
+        <div key={g.id} className="agenda">
+          <div className="eyebrow">Before you meet {firstOf(g.name)}</div>
+          <Markdown text={String(g.research)} />
+        </div>
+      ))}
+      {ahead && unbriefed.length > 0 && briefed.length === 0 && (
+        <div className="unprepared">
+          <Orb size={22} />
+          <div>
+            <b>You haven’t met {unbriefed.map((p) => firstOf(byEmail.get(p.email)?.name || p.name || p.email.split('@')[0])).slice(0, 2).join(' or ')} before.</b>
+            <span>{tm()} can write a few lines on who they are and why you are meeting.</span>
+          </div>
+          <button className="btn spark" onClick={() => lem.ask(
+            `Write the short brief for my meeting "${title}" on ${day}. Run first_meetings with {"meeting_id": "${m.id}"} and follow the brief skill's "Before a first meeting" section. Then tell me in one line that it is ready.`,
+            { key: `meeting:${m.id}`, title, about: `their meeting "${title}" on ${day} (calendar row ${m.id} in interactions)` })}>
+            <Sparkles size={13} /> Prepare a brief
+          </button>
+        </div>
+      )}
+      {worthRaising(series?.raise_next) && (
+        <div className="agenda"><div className="eyebrow">Raise this time</div><Markdown text={String(series!.raise_next)} /></div>
+      )}
+      {note?.summary && (
+        <div className="stands"><div className="eyebrow">From the notes</div><p>{note.summary}</p></div>
+      )}
+
+      <div className="sec-h">Open with them <span className="muted">{loops.items.length || ''}</span></div>
+      {loops.items.length ? <ItemList loops={loops.items} onChange={bump} />
+        : <Empty line={invited.length ? 'Nothing open with anyone in this meeting.' : 'Nobody else is on this one.'} />}
+
+      {invited.length > 0 && (
+        <>
+          <div className="sec-h">Who is coming</div>
+          <div className="plist">
+            {invited.map((p) => {
+              const g = byEmail.get(p.email)
+              return g
+                ? <button key={p.email} className="prow" onClick={() => push({ type: 'person', id: g.id })}>
+                    <Avatar name={g.name} src={g.avatar_url} />
+                    <span className="prow-t"><b>{g.name}</b>{(g.role || g.company) && <span className="muted"> {[g.role, g.company].filter(Boolean).join(', ')}</span>}</span>
+                  </button>
+                : <div key={p.email} className="prow">
+                    <Avatar name={p.name || p.email} />
+                    <span className="prow-t"><b>{p.name || p.email.split('@')[0]}</b><span className="muted"> {p.email}</span></span>
+                  </div>
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 /* ---------------- a document ---------------- */
 
 function DocFocus({ f }: { f: Extract<Focus, { type: 'doc' }> }) {
@@ -528,6 +669,7 @@ export function FocusPanel() {
         {focus.type === 'company' && <CompanyFocus f={focus} />}
         {focus.type === 'workstream' && <WorkstreamFocus f={focus} />}
         {focus.type === 'doc' && <DocFocus f={focus} />}
+        {focus.type === 'meeting' && <MeetingFocus f={focus} />}
       </div>
       </InFocus.Provider>
     </aside>

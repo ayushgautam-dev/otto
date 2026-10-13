@@ -1,0 +1,87 @@
+{
+  "description": "Before a first meeting \u2014 when a meeting with somebody new is within two days, writes a short brief on who they are, how the meeting came about and what is worth asking.",
+  "edges": [
+    {
+      "id": "e0",
+      "label": null,
+      "source": "first",
+      "target": "any"
+    },
+    {
+      "id": "e1",
+      "label": null,
+      "source": "any",
+      "target": "end"
+    },
+    {
+      "id": "e2",
+      "label": null,
+      "source": "any",
+      "target": "brief"
+    },
+    {
+      "id": "e3",
+      "label": null,
+      "source": "brief",
+      "target": "end"
+    }
+  ],
+  "icon_url": null,
+  "mode": "GLOBAL",
+  "name": "autopilot_meeting_briefs",
+  "nodes": [
+    {
+      "config": {
+        "function_name": "first_meetings",
+        "input_mapping": {}
+      },
+      "id": "first",
+      "label": "Who is new",
+      "position": null,
+      "type": "FUNCTION"
+    },
+    {
+      "config": {
+        "rules": [
+          {
+            "condition": "first.any",
+            "next_node_id": "brief"
+          }
+        ]
+      },
+      "id": "any",
+      "label": "Anybody new?",
+      "position": null,
+      "type": "DECISION"
+    },
+    {
+      "config": {
+        "agent_name": "pod_default",
+        "input_mapping": {
+          "message": {
+            "type": "literal",
+            "value": "Load the otto-brief skill and follow its 'Before a first meeting' section exactly.\n\n`lemma functions run first_meetings --output json` lists the meetings in the next two days with somebody the person has not really met, each with its `guests`, and says whether a paid lookup key is saved (`has_key`). If it lists none, stop at once and do nothing else.\n\nFor each guest, write the short brief the skill describes and save it on that person's record. Work from what the person's own mail shows first, then look them and their company up as the skill says. Every fact you did not read in the person's own mail carries the page it came from; anything you cannot tie to a source, or cannot be sure is about THIS person and not a namesake, is left out. Never guess. Do not read function source or survey the pod, do not open commitments, and do not send anything. Reply with one number: how many briefs you wrote."
+          }
+        }
+      },
+      "id": "brief",
+      "label": "Write the brief",
+      "position": null,
+      "type": "AGENT"
+    },
+    {
+      "config": {},
+      "id": "end",
+      "label": "Done",
+      "position": null,
+      "type": "END"
+    }
+  ],
+  "start": {
+    "config": {
+      "schedule_type": "CRON"
+    },
+    "type": "SCHEDULED"
+  },
+  "visibility": "POD"
+}

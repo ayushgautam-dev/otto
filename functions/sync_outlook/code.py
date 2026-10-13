@@ -186,25 +186,48 @@ _PRUNE: list[dict] = []
 def _calendar(pod: Pod, data: SyncOutlookInput, me: str, mine: set, acct: dict, res: SyncOutlookResult) -> list[dict]:
     use = {"account_id": acct["id"]} if acct.get("id") else {}
     now = datetime.now(timezone.utc)
-    try:
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    t_from = (now - timedelta(days=data.past_days)).strftime(fmt)
+    t_now = now.strftime(fmt)
+    t_to = (now + timedelta(days=data.future_days)).strftime(fmt)
+
+    def view(start: str, end: str, top: int, order: str) -> list[dict]:
         body = _unwrap(pod.connectors.execute("outlook", "OUTLOOK_GET_CALENDAR_VIEW", {
-            "start_datetime": (now - timedelta(days=data.past_days)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "end_datetime": (now + timedelta(days=data.future_days)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "top": data.max_events, "timezone": "UTC", "orderby": "start/dateTime asc",
+            "start_datetime": start, "end_datetime": end,
+            "top": top, "timezone": "UTC", "orderby": order,
         }, **use))
+        return body.get("value") or []
+
+    # What is still to come is read first and on its own, so that a busy calendar's past
+    # can never crowd it out: one read ordered from the oldest day used to spend the whole
+    # allowance on last week and never reach tomorrow (the same fix as sync_calendar).
+    try:
+        ahead = view(t_now, t_to, 250, "start/dateTime asc")
     except Exception as exc:
         res.errors.append(f"calendar: {str(exc)[:160]}")
         return []
-    items = body.get("value") or []
+    try:
+        # the most recent past first, so a cut drops the oldest meetings, not last week's
+        behind = list(reversed(view(t_from, t_now, max(data.max_events, 60), "start/dateTime desc")))
+    except Exception:
+        try:
+            behind = view(t_from, t_now, max(data.max_events, 60), "start/dateTime asc")
+        except Exception as exc:
+            res.errors.append(f"calendar (past): {str(exc)[:160]}")
+            behind = []
+    seen_ids: set[str] = set()
+    items = []
+    for ev in behind + ahead:
+        if ev.get("id") and ev["id"] not in seen_ids:
+            seen_ids.add(ev["id"])
+            items.append(ev)
     res.fetched += len(items)
-    # a full read of the window says what is still on this calendar
-    if items and len(items) < data.max_events:
-        now_ = datetime.now(timezone.utc)
+    # the coming days were read whole: what is no longer among them has gone
+    if ahead and len(ahead) < 250:
         _PRUNE.append({
             "prefix": "ocal:", "account_id": acct.get("id") or None,
-            "start": (now_ - timedelta(days=data.past_days)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "end": (now_ + timedelta(days=data.future_days)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "keep": [f"ocal:{ev['id']}" for ev in items if ev.get("id") and not ev.get("isCancelled")],
+            "start": t_now, "end": t_to,
+            "keep": [f"ocal:{ev['id']}" for ev in ahead if ev.get("id") and not ev.get("isCancelled")],
         })
 
     out: list[dict] = []
@@ -331,4 +354,10 @@ async def sync_outlook(ctx: FunctionContext, data: SyncOutlookInput) -> SyncOutl
         except Exception as exc:
             res.errors.append(f"prune: {str(exc)[:120]}")
     _PRUNE.clear()
+    # a meeting that has just appeared may be a first meeting with somebody new
+    if res.recorded and what in ("calendar", "both"):
+        try:
+            pod.workflows.create_run("autopilot_meeting_briefs")
+        except Exception:
+            pass          # the twice-daily run prepares the brief instead
     return res

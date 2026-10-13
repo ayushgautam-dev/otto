@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { runFn, useSql, lit } from './lib'
-import { getSetting, putSetting, restartCatchUp } from './backfill'
+import { getSetting, putSetting, restartCatchUp, loadSourceHistory } from './backfill'
 
 /* The person's mailboxes.
    Somebody may connect several: two Gmails, a Gmail and an Outlook. Everything still
@@ -41,6 +41,8 @@ export function useAccounts() {
     /** more than one mailbox: the only time any of this is shown */
     multi: mail.length > 1,
     sources: q.data?.sources ?? [],
+    /** the pod has answered: an empty list now means "nothing connected", not "not known yet" */
+    ready: q.isSuccess,
     refresh: () => qc.invalidateQueries({ queryKey: ['accounts'] }),
     setPrimary: async (a: MailAccount) => {
       await putSetting(PRIMARY, `${a.provider}:${a.id}`)
@@ -77,7 +79,7 @@ export const accountLabel = (a: MailAccount) => a.email || (a.provider === 'gmai
    remembers which accounts it has seen; a new one restarts the background catch-up
    (rows already loaded are skipped, so only the new mailbox costs anything). */
 export function useNewAccountCatchUp() {
-  const { mail, sources } = useAccounts()
+  const { mail, sources, ready } = useAccounts()
   const ids = mail.map((a) => a.id).sort().join(',')
   useEffect(() => {
     if (!ids) return
@@ -91,4 +93,23 @@ export function useNewAccountCatchUp() {
       if (ids.split(',').some((id) => !before.has(id))) await restartCatchUp(sources)
     })()
   }, [ids])
+
+  /* The same for what is not a mailbox: a calendar or a note-taker connected later.
+     Unlike a mailbox this does not wait for first run to finish; it loads the moment
+     the connection shows up, even while the mail is still being read. */
+  const others = sources.filter((s) => s === 'google_calendar' || s === 'granola').sort().join(',')
+  useEffect(() => {
+    if (!ready) return
+    void (async () => {
+      const seen = (await getSetting('sources_seen'))?.value
+      if (seen === others) return
+      await putSetting('sources_seen', others)
+      // before first run has begun there is nothing to add to: first run loads them itself
+      if (!(await getSetting('catchup'))?.value) return
+      // (no record yet: an account from before this was tracked counts as already loaded)
+      if (seen == null) return
+      const before = new Set(seen.split(',').filter(Boolean))
+      for (const app of others.split(',').filter(Boolean)) if (!before.has(app)) await loadSourceHistory(app)
+    })()
+  }, [others, ready])
 }

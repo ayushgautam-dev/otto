@@ -97,6 +97,27 @@ def _day(days_ago: int) -> str:
     return f"{d.year}/{d.month}/{d.day}"
 
 
+def _connected_now(pod: Pod, ctx) -> set[str]:
+    """The sources this person has connected, by the names first run uses for them."""
+    uid = str(getattr(ctx, "user_id", "") or "")
+    if not uid:
+        return set()
+    try:
+        cfgs = pod.connectors.auth_configs.list().to_dict()
+        names = {str(c.get("id")): str(c.get("name") or "").lower() for c in (cfgs.get("items") or [])}
+        accts = pod.connectors.accounts.list().to_dict()
+        out = set()
+        for a in (accts.get("items") or []):
+            if a.get("status") != "CONNECTED" or str(a.get("user_id") or "") != uid:
+                continue
+            for key in (str(a.get("connector_id") or "").lower(), names.get(str(a.get("auth_config_id")), "")):
+                if key in ("gmail", "google_calendar", "outlook", "granola"):
+                    out.add(key)
+        return out
+    except Exception:
+        return set()
+
+
 async def catch_up_step(ctx: FunctionContext, data: StepInput) -> StepResult:
     pod = ctx.pod or Pod.from_env()
     try:
@@ -112,7 +133,11 @@ async def catch_up_step(ctx: FunctionContext, data: StepInput) -> StepResult:
     if not state or state.get("done"):
         return StepResult(did="nothing to do", done=True)
 
-    sources = state.get("sources") or []
+    # What is connected NOW, not only what was when first run began: somebody who adds
+    # their calendar or their meeting notes while the mail is still being collected
+    # gets those collected with it, not skipped.
+    sources = sorted(set(state.get("sources") or []) | _connected_now(pod, ctx))
+    state["sources"] = sources
     target = int(state.get("target") or 21)
     covered = int(state.get("covered") or 0)
     res = StepResult(covered=covered)

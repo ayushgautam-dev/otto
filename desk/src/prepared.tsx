@@ -347,6 +347,8 @@ export function Letter({ draft, onSent, docs = [] }: { draft: DraftRow; onSent?:
       <div className="letter-foot">
         <button className="link-q" onClick={() => void discard()}>Discard</button>
         <span className="grow" />
+        {/* somebody known by name only (a promise from a call): their address is still to come */}
+        {!to.length && <span className="muted" style={{ fontSize: 12.5 }}>Add {(draft.person || '').split(' ')[0] || 'their'}{draft.person ? '’s' : ''} address above to send</span>}
         <HeldButton held={held} disabled={state === 'sending' || !to.length || !body.trim()}
           icon={<Send size={13} />} label={state === 'sending' ? 'Sending…' : isReply ? `Send reply` : 'Send'}
           onGo={() => held.start(reallySend)} />

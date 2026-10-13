@@ -16,6 +16,8 @@ export type Focus =
   | { type: 'workstream'; id: string }
   | { type: 'doc'; id: string }
   | { type: 'loop'; id: string; nudge?: boolean }
+  /** a meeting on the calendar (its row in the ledger) */
+  | { type: 'meeting'; id: string }
 
 export const focusKey = (f: Focus) => `${f.type}:${f.id}`
 

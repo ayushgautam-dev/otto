@@ -57,9 +57,23 @@ class Earlier(BaseModel):
 
 
 class ExistingLoop(BaseModel):
-    person_email: str
+    # the handle for saying what a message did to it (ingest_open_loops `changes`)
+    id: str = ""
+    person_email: str = ""
+    person_name: str = ""
+    side: str = ""
     kind: str
     obligation: str
+    opened_at: str | None = None
+    # the conversation it is tied to now; a message in any other one can still be about it
+    thread_ref: str | None = None
+    # a reply or nudge is already written and waiting for the person's Send
+    prepared: bool = False
+
+
+class Topic(BaseModel):
+    title: str
+    summary: str = ""
 
 
 class PendingResult(BaseModel):
@@ -71,6 +85,9 @@ class PendingResult(BaseModel):
     # Loops already open with the same people. The extractor must read these before
     # writing, so the same obligation phrased differently does not become a second row.
     already_open: list[ExistingLoop] = Field(default_factory=list)
+    # The topics on the person's desk, so a new commitment is filed under the one it
+    # belongs to as it is found.
+    topics: list[Topic] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
 
 
@@ -140,6 +157,32 @@ async def pending_interactions(ctx: FunctionContext, data: PendingInput) -> Pend
     limit = max(1, min(40, data.limit))
     found: list[dict] = []
 
+    # A meeting note rarely says who was in the room: the note-taking tool lists the
+    # person themselves and nobody else. The calendar does. Each note is tied to its
+    # calendar meeting when it is recorded (`meeting_id`), and the attendees of that
+    # meeting are who the note is with.
+    def with_attendees(found_rows: list[dict]) -> None:
+        notes = [r for r in found_rows if r.get("source") in ("granola", "meet")]
+        if not notes:
+            return
+        ids = ",".join("'" + str(r["id"]) + "'" for r in notes)
+        try:
+            links = rows(
+                "select n.id as note_id, c.participants, c.subject from interactions n "
+                "join interactions c on c.id = n.meeting_id "
+                f"where n.id in ({ids})")
+        except Exception:
+            return          # a pod from before notes were tied to meetings
+        by_note = {str(l["note_id"]): l for l in links}
+        for r in notes:
+            link = by_note.get(str(r["id"]))
+            if not link:
+                continue
+            have = {(p.get("email") or "").lower() for p in (r.get("participants") or []) if isinstance(p, dict)}
+            extra = [dict(p, via="calendar") for p in (link.get("participants") or [])
+                     if isinstance(p, dict) and (p.get("email") or "").lower() not in have]
+            r["participants"] = list(r.get("participants") or []) + extra
+
     if data.include_extracted:
         found = rows(f"select {cols} from interactions order by occurred_at desc limit {limit}")
         res.remaining = 0
@@ -159,6 +202,9 @@ async def pending_interactions(ctx: FunctionContext, data: PendingInput) -> Pend
             f"select {cols} from interactions where {READABLE} "
             "order by (kind = 'email' and direction = 'inbound' and addressed_to_me) desc, "
             "occurred_at desc limit 800")
+        # before the work is shared out: a note goes to the reader of the company it was with
+        with_attendees(pool)
+        with_attendees(again)
         # Work is handed out by company: everybody at one company domain goes to the same
         # reader, together. The person's own team, and people on personal addresses, are
         # each their own group, since a shared domain says nothing about them. Several
@@ -346,23 +392,62 @@ async def pending_interactions(ctx: FunctionContext, data: PendingInput) -> Pend
     # decide this and got it wrong whenever the wording differed — "share the hiring
     # decision" and "decide next steps and let him know" are one obligation, and became
     # two rows. So the judgment moves to the agent, and this is what it judges against.
-    emails = sorted({i.person_email for i in res.items if i.person_email})
-    if emails:
-        quoted = ",".join("'" + e.replace("'", "''") + "'" for e in emails[:60])
+    #
+    # "These people" is everybody on the messages, not only the first recipient: a mail
+    # to one person with another in copy can settle what is open with either of them.
+    # Each row carries its id, so the reader can say that a message settled it or moved
+    # it, whichever conversation that message was in.
+    emails: set[str] = set()
+    names: set[str] = set()
+    for i in res.items:
+        if i.person_email:
+            emails.add(i.person_email.lower())
+        for p in (i.participants or []):
+            if not isinstance(p, dict):
+                continue
+            e = (p.get("email") or "").strip().lower()
+            if e and e != me:
+                emails.add(e)
+            elif not e and (p.get("name") or "").strip():
+                names.add((p.get("name") or "").strip().lower())
+    if emails or names:
+        quoted = ",".join("'" + e.replace("'", "''") + "'" for e in sorted(emails)[:80]) or "''"
         same_company = "".join(
             " or p.email ilike '%@" + d.replace("'", "''").replace("%", "") + "'" for d in domains[:12])
+        by_name = ""
+        if names:
+            by_name = " or (p.email is null and lower(p.name) in (" + ",".join(
+                "'" + n.replace("'", "''") + "'" for n in sorted(names)[:40]) + "))"
         try:
             for r in rows(
-                f"select p.email as person_email, l.kind, l.obligation "
-                f"from loops l join people p on p.id = l.person_id "
-                f"where l.status = 'open' and (p.email in ({quoted}){same_company})"
+                "select l.id, coalesce(p.email, '') as person_email, coalesce(p.name, '') as person_name, "
+                "l.side, l.kind, l.obligation, l.opened_at, l.thread_ref, "
+                "(select count(*) from drafts d where d.loop_id = l.id and d.status = 'pending') as prepared "
+                "from loops l join people p on p.id = l.person_id "
+                f"where l.status = 'open' and (p.email in ({quoted}){same_company}{by_name}) "
+                "order by l.opened_at desc limit 120"
             ):
                 res.already_open.append(ExistingLoop(
+                    id=str(r.get("id") or ""),
                     person_email=r.get("person_email") or "",
+                    person_name=r.get("person_name") or "",
+                    side=r.get("side") or "",
                     kind=r.get("kind") or "",
                     obligation=r.get("obligation") or "",
+                    opened_at=str(r.get("opened_at") or "") or None,
+                    thread_ref=r.get("thread_ref"),
+                    prepared=int(r.get("prepared") or 0) > 0,
                 ))
         except Exception as exc:
             res.errors.append(f"could not read open loops: {str(exc)[:100]}")
+
+    if res.items:
+        try:
+            for r in rows("select title, summary from situations where status = 'active' "
+                          "order by last_seen_at desc nulls last limit 40"):
+                if (r.get("title") or "").strip():
+                    res.topics.append(Topic(title=r["title"].strip(), summary=(r.get("summary") or "")[:160]))
+        except Exception as exc:
+            res.errors.append(f"could not read topics: {str(exc)[:100]}")
 
     return res

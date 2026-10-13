@@ -169,12 +169,24 @@ const mailSlice = (from: number, to: number) =>
     max_messages: SLICE_MAX, batch_size: 10,
   })
 
+/** Where this desk lives on the web, kept so the assistant can link back to it when it
+ *  writes to the person (the "it is ready" email after first run). Every copy of the
+ *  product sits at its own address, so the only place that knows it is the open app. */
+export async function rememberAppUrl(): Promise<void> {
+  try {
+    const here = window.location.origin
+    if (!here.startsWith('https://')) return
+    if ((await getSetting('app_url'))?.value !== here) await putSetting('app_url', here)
+  } catch { /* a link the email goes without */ }
+}
+
 export interface QuickResult { trouble: string[] }
 
 /** The first minute: the most recent mail and this week's calendar. Reading them, and
  *  everything older, is handed to the pod so the desk can open straight away. */
 export async function quickStart(sources: string[], say: (phase: string) => void): Promise<QuickResult> {
   const trouble: string[] = []
+  void rememberAppUrl()
   const on = (app: string) => sources.includes(app)
   const attempt = async (label: string, fn: () => Promise<unknown>) => {
     try { await fn() } catch (e) { trouble.push(`${label}: ${(e as Error)?.message ?? 'did not finish'}`) }
@@ -257,6 +269,34 @@ export async function restartCatchUp(sources: string[]): Promise<void> {
     await setCatchUpSchedule(true)
     await startWorkflow('catch_up')
   } catch { /* the nightly pass picks the new mailbox up instead */ }
+}
+
+/** A calendar or a note-taker connected AFTER first run began brings its own three weeks,
+ *  straight away, whatever else is going on: first run fixed its list of sources when it
+ *  started, so without this somebody who adds their meeting notes five minutes in gets
+ *  none of them until the nightly pass, and never the older ones. Everything already in
+ *  the ledger is skipped, and a reading pass follows so what was promised on those calls
+ *  reaches the desk now. (A mailbox added later goes through restartCatchUp instead.) */
+export async function loadSourceHistory(app: string): Promise<void> {
+  try {
+    if (app === 'granola') {
+      await sync('sync_granola', { time_range: 'last_30_days', batch_size: 10 })
+    } else if (app === 'google_calendar') {
+      await sync('sync_calendar', { past_days: WINDOW_DAYS, future_days: 14, max_events: 150, batch_size: 10 })
+    } else return
+    // first run also learns of it, so its own collecting step does not treat it as missing
+    const c = await readCatchUp()
+    if (c && !c.sources.includes(app)) {
+      const row = await getSetting('catchup')
+      if (row) {
+        try {
+          const fresh = JSON.parse(row.value) as CatchUp
+          if (!fresh.sources.includes(app)) await putSetting('catchup', JSON.stringify({ ...fresh, sources: [...fresh.sources, app] }))
+        } catch { /* the pod reads what is connected for itself */ }
+      }
+    }
+    if ((await unreadCount()) > 0) await startReader().catch(() => null)
+  } catch { /* the next open of the app, or the nightly pass, loads it */ }
 }
 
 export async function readCatchUp(): Promise<CatchUp | null> {
@@ -417,7 +457,9 @@ export function useFreshCalendar(sources: string[], onChange: () => void) {
         try { due = Date.now() - Number(localStorage.getItem(NOTES) || 0) > NOTES_EVERY } catch { /* just ask */ }
         if (due) {
           try { localStorage.setItem(NOTES, String(Date.now())) } catch { /* fine */ }
-          jobs.push(sync('sync_granola', { time_range: 'this_week', batch_size: 10 }))
+          // the whole month, not "this week": the pod fetches only notes it does not
+          // hold yet, so this costs one listing and never leaves an older note behind
+          jobs.push(sync('sync_granola', { time_range: 'last_30_days', batch_size: 10 }))
         }
       }
       await Promise.allSettled(jobs)
