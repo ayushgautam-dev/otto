@@ -77,6 +77,8 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
   const draft = dq.items[0]
   const first = (l?.person || 'them').split(' ')[0]
   const [making, setMaking] = useState(false)
+  // null: the Redo button; a string: what they want changed, being typed
+  const [redo, setRedo] = useState<string | null>(null)
   const leave = () => { bump(); closeTab(focusKey(f)) }
 
   // A nudge starts as a real pending draft on the same conversation — the same write as before.
@@ -97,7 +99,7 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
      written, and the draft appears here when it is ready; the chat is for when somebody
      chooses to talk. While waiting, the pane re-reads the draft every few seconds and
      stops as soon as what is there has changed (or after a few minutes, in case it never does). */
-  const sig = `${draft?.id ?? ''}:${(draft?.body ?? '').length}:${docs.items.length}`
+  const sig = `${draft?.id ?? ''}:${(draft?.body ?? '').length}:${JSON.stringify(draft?.options ?? '').length}:${docs.items.length}`
   const [writing, setWriting] = useState<{ from: string; since: number } | null>(null)
   useEffect(() => {
     if (!writing) return
@@ -116,12 +118,16 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
   if (q.isLoading && !l) return <div className="focus-body"><Loading /></div>
   if (!l) return <div className="focus-body"><Empty line="This item is gone." /></div>
 
-  const quietWrite = () => { if (!l) return; setWriting({ from: sig, since: Date.now() }); lemWrite() }
-  const lemWrite = () => lem.write(
+  const quietWrite = (direction?: string) => { if (!l) return; setWriting({ from: sig, since: Date.now() }); lemWrite(direction) }
+  const lemWrite = (direction?: string) => {
+    const say = direction?.trim() ? ` My direction: "${direction.trim()}".` : ''
+    return lem.write(
     l.side === 'them'
-      ? `Write a short nudge to ${l.person} about "${l.obligation}" (commitment ${l.id}) in my voice, as a reply on the same conversation. Put it in the pending draft for that commitment if there is one. End with the card marker.`
-      : `Prepare "${l.obligation}" for me (commitment ${l.id}). Use the otto-write skill and pick the right shape. End with the card marker.`,
+      ? `Write a short nudge to ${l.person} about "${l.obligation}" (commitment ${l.id}) in my voice, as a reply on the same conversation. Put it in the pending draft for that commitment if there is one.${say} End with the card marker.`
+      : `Prepare "${l.obligation}" for me (commitment ${l.id}). Use the otto-write skill and pick the right shape.${say} End with the card marker.`,
     { key: `loop:${l.id}`, title: l.obligation, about: `the commitment "${l.obligation}" (loop_id ${l.id})` })
+  }
+  const redoNow = () => { const t = redo ?? ''; setRedo(null); quietWrite(t) }
 
   const hasWork = !!draft || docs.items.length > 0
 
@@ -160,7 +166,7 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
           <div className="prepared">
             <div className="prepared-h"><Orb size={14} /> {tm()} prepared</div>
             {draft && <LemNote text={draft.note} />}
-            {draft && <Prepared draft={draft} docs={docs.items} onSent={leave} />}
+            {draft && <Prepared draft={draft} docs={docs.items} onSent={leave} onDirect={(t) => quietWrite(t)} />}
             {docs.items.map((d) => <Paper key={d.id} doc={d} />)}
           </div>
         ) : (
@@ -171,7 +177,7 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
               <span>{l.side === 'you' ? `${tm()} can write it in your voice. You still press send.` : 'A short follow-up on the same conversation.'}</span>
             </div>
             {l.side === 'you'
-              ? <button className="btn spark" onClick={quietWrite}><Sparkles size={13} /> Prepare it</button>
+              ? <button className="btn spark" onClick={() => quietWrite()}><Sparkles size={13} /> Prepare it</button>
               : <button className="btn spark" disabled={making} onClick={() => void (async () => { await startNudge(); quietWrite() })()}>Nudge {first}</button>}
           </div>
         )}
@@ -180,11 +186,19 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
       <div className="focus-foot">
         <CloseBar loop={l} onClosed={leave} lead={
           <>
-            {hasWork && (
-              <button className="btn ghost sm" disabled={!!writing} onClick={quietWrite}>
+            {hasWork && (redo === null ? (
+              <button className="btn ghost sm" disabled={!!writing}
+                onClick={() => (l.side === 'them' && draft ? quietWrite() : setRedo(''))}>
                 <Sparkles size={13} /> {l.side === 'them' && draft ? `Let ${tm()} write it` : `Redo with ${tm()}`}
               </button>
-            )}
+            ) : (
+              <span className="redo-say">
+                <input autoFocus value={redo} placeholder="What should change? Leave empty to redo it"
+                  onChange={(e) => setRedo(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') redoNow(); if (e.key === 'Escape') setRedo(null) }} />
+                <button className="btn sm line" onClick={redoNow}>Redo</button>
+              </span>
+            ))}
             <button className="btn ghost sm" onClick={() => lem.show({ key: `loop:${l.id}`, title: l.obligation, about: `the commitment "${l.obligation}" (loop_id ${l.id})` })}>
               <MessageCircle size={13} /> Ask
             </button>
@@ -296,7 +310,8 @@ function PersonFocus({ f }: { f: Extract<Focus, { type: 'person' }> }) {
     `select l.id, l.side, l.kind, l.obligation, l.provenance, l.opened_at, l.due_at,
             l.urgency, l.urgency_reason, l.thread_ref, l.person_id, l.source,
             coalesce(p.name,'') as person, p.avatar_url,
-            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft
+            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft,
+            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending' and d.options is not null and jsonb_typeof(d.options->'choices') = 'array' and d.options->>'chosen' is null) as needs_call
      from loops l left join people p on p.id=l.person_id
      where l.person_id=${lit(id)} and l.status='open'
      order by coalesce(l.urgency,2) asc`, version))
@@ -380,7 +395,8 @@ function CompanyFocus({ f }: { f: Extract<Focus, { type: 'company' }> }) {
   const loops = useSql<LoopRow>(rev(
     `select l.id, l.side, l.kind, l.obligation, l.provenance, l.opened_at, l.due_at, l.urgency, l.urgency_reason,
             l.thread_ref, l.person_id, l.source, coalesce(p.name,'') as person, p.avatar_url,
-            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft
+            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft,
+            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending' and d.options is not null and jsonb_typeof(d.options->'choices') = 'array' and d.options->>'chosen' is null) as needs_call
      from loops l join people p on p.id=l.person_id
      where p.company_id=${lit(f.id)} and l.status='open' order by coalesce(l.urgency,2)`, version))
   if (!c) return <div className="focus-body"><Loading /></div>
@@ -438,7 +454,8 @@ function WorkstreamFocus({ f }: { f: Extract<Focus, { type: 'workstream' }> }) {
   const loops = useSql<LoopRow>(rev(
     `select l.id, l.side, l.kind, l.obligation, l.provenance, l.opened_at, l.due_at, l.urgency, l.urgency_reason,
             l.thread_ref, l.person_id, l.source, coalesce(p.name,'') as person, p.avatar_url,
-            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft
+            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft,
+            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending' and d.options is not null and jsonb_typeof(d.options->'choices') = 'array' and d.options->>'chosen' is null) as needs_call
      from loops l left join people p on p.id=l.person_id
      where l.work_project_id=${lit(f.id)} and l.status='open' order by coalesce(l.urgency,2)`, version))
   const cards = useSql<BoardRow>(rev(w?.track_id ? boardSql(`b.track_id = ${lit(w.track_id)}`) : null, version))
@@ -531,7 +548,8 @@ function MeetingFocus({ f }: { f: Extract<Focus, { type: 'meeting' }> }) {
   const loops = useSql<LoopRow>(rev(inList
     ? `select l.id, l.side, l.kind, l.obligation, l.provenance, l.opened_at, l.due_at, l.urgency, l.urgency_reason,
               l.thread_ref, l.person_id, l.source, coalesce(p.name,'') as person, p.avatar_url,
-              (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft
+              (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft,
+              (select count(*) from drafts d where d.loop_id=l.id and d.status='pending' and d.options is not null and jsonb_typeof(d.options->'choices') = 'array' and d.options->>'chosen' is null) as needs_call
        from loops l join people p on p.id=l.person_id
        where lower(p.email) in (${inList}) and l.status='open' order by coalesce(l.urgency,2)`
     : null, version))

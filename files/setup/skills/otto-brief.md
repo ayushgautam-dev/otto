@@ -31,7 +31,10 @@ Once a day. Compose it, store it, send it — to the person themselves and nobod
      for the first time and has a brief (`people.research` is filled), put its first
      line in `owed` in place of nothing: "First meeting. Head of Ops at Acme; she wrote
      in about the pilot on 3 Oct." Never invent that line; with no brief, say nothing.
-   - `ready` — each pending draft or document: who it is for and what it says.
+   - `ready` — each pending draft or document: who it is for and what it says. A draft
+     written as choices (`options` filled, `body` empty) is a decision, not a text: `what`
+     is its question and the choices ("Sponsor the Brightline dinner? Replies are written
+     for Sponsor it / Pass this time"), `tag` is "your call".
    - `waiting` — what else is open on the person's side, by person.
    - `overdue` — oldest first, with how long in `tag` ("7 days late").
    - `tomorrow` — tomorrow's meetings, the same shape as today's.

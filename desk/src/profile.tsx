@@ -1,73 +1,19 @@
-import { useCallback, useEffect, useState } from 'react'
-import { X, Check, RefreshCw, Moon, SunMedium } from 'lucide-react'
-import { client, runFn } from './lib'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { X, Check, RefreshCw, Moon, SunMedium, Mail, Plus } from 'lucide-react'
+import { runFn } from './lib'
 import { Avatar, useToast } from './ui'
 import { SourceMark } from './brand'
 import { tm } from './teammate'
 import { useAccounts, accountLabel, type Provider } from './accounts'
+import { SOURCES, OUTPUTS, SUGGESTED, orgId, readStatus, signInUrl, type App, type Status } from './connect'
+import { readReach, startTelegram, readTelegramSetup, telegramReady, telegramFailed, telegramLink, lemmaPodUrl, type Reach, type TelegramSetup } from './reach'
+import { setUpWhatsApp, whatsAppLink, whatsAppWebLink, firstMessage, qrPath, lastFour } from './whatsapp'
 
-/* You: who is signed in, and every app Lem works with — what's connected, what isn't,
-   and a few worth adding.
-
-   Status is read straight from the organisation's connected accounts, matched on the
-   install's name (Granola is an install called "granola" on the shared "mcp" connector,
-   so the connector id alone can't tell it apart).
-
-   Connecting goes two ways:
-   - The sources the pod already reads go through `connect_source`, exactly as first run
-     does — it installs what's missing and hands back the provider's sign-in page.
-   - The suggestions go straight to the platform (enable the app, open a connect request).
-     Nothing reads them automatically yet; Lem can use them when asked. */
-
-interface App { id: string; label: string; why: string; via: 'pod' | 'native'; connector?: string }
-
-// what Lem reads to find what's unfinished
-const SOURCES: App[] = [
-  { id: 'gmail', label: 'Gmail', why: 'Threads, who spoke last, and what was asked of you.', via: 'pod' },
-  { id: 'google_calendar', label: 'Google Calendar', why: 'Who you’re meeting, and what was agreed but never booked.', via: 'pod' },
-  { id: 'outlook', label: 'Outlook', why: 'Mail and calendar, for work that lives in Microsoft 365. Connect it if your Teams meetings sit on a Microsoft calendar: they are not in Google Calendar, even when your phone shows the two together.', via: 'pod' },
-  { id: 'granola', label: 'Granola', why: 'Meeting notes and action items — where a promise made out loud gets written down.', via: 'pod' },
-  { id: 'googlemeet', label: 'Google Meet', why: 'Call transcripts, where Meet recorded one.', via: 'pod' },
-  { id: 'slack', label: 'Slack', why: 'The channels you invited the app to, where the day’s asks land.', via: 'native', connector: 'slack' },
-]
-// where Lem puts finished work
-const OUTPUTS: App[] = [
-  { id: 'google_docs', label: 'Google Docs', why: 'Documents open as real Google Docs.', via: 'pod' },
-  { id: 'google_drive', label: 'Google Drive', why: 'Share a document with just the people it’s for.', via: 'pod' },
-]
-// worth adding for this kind of work
-const SUGGESTED: App[] = [
-  { id: 'zoom', label: 'Zoom', why: 'Calls outside Google Meet — where half the promises are made out loud.', via: 'native', connector: 'zoom' },
-  { id: 'calendly', label: 'Calendly', why: 'Offer your booking link instead of trading times by email.', via: 'native', connector: 'calendly' },
-]
-
-type Status = 'connected' | 'reauth' | 'off'
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-async function orgId(): Promise<string | null> {
-  const c = client as unknown as { podId?: string; config?: { podId?: string }; pods: { get: (id: string) => Promise<{ organization_id?: string }> } }
-  const pod = c.podId || c.config?.podId
-  if (!pod) return null
-  try { return (await c.pods.get(pod)).organization_id ?? null } catch { return null }
-}
-
-/** install name → how its account stands */
-async function readStatus(org: string): Promise<Record<string, Status>> {
-  const conn = client.connectors as unknown as {
-    accounts: { list: (o: string) => Promise<{ items?: { auth_config_id: string; status: string }[] }> }
-    authConfigs: { list: (o: string, opts?: { limit: number }) => Promise<{ items?: { id: string; name: string }[] }> }
-  }
-  const [cfgs, accts] = await Promise.all([conn.authConfigs.list(org, { limit: 100 }), conn.accounts.list(org)])
-  const nameOf = new Map((cfgs.items ?? []).map((c) => [String(c.id), String(c.name).toLowerCase()]))
-  const out: Record<string, Status> = {}
-  for (const a of accts.items ?? []) {
-    const n = nameOf.get(String(a.auth_config_id))
-    if (!n) continue
-    const s: Status = a.status === 'CONNECTED' ? 'connected' : a.status === 'REAUTH_REQUIRED' || a.status === 'EXPIRED' ? 'reauth' : 'off'
-    if (out[n] !== 'connected') out[n] = s
-  }
-  return out
-}
+/* You: who is signed in, every way to reach the assistant, and every app it works with.
+   The app list and its status/connect logic live in connect.ts and the channels in reach.ts,
+   both shared with the other app. */
 
 function Row({ app, status, busy, onConnect }: { app: App; status: Status | undefined; busy: string | null; onConnect: (a: App) => void }) {
   const waiting = busy === app.id
@@ -116,21 +62,10 @@ export function Profile({ name, email, onClose }: { name: string; email: string;
     setBusy(app.id)
     const win = window.open('', '_blank', 'width=520,height=680')
     try {
-      let url: string | null | undefined
-      if (app.via === 'pod') {
-        const out = await runFn<{ auth_url?: string; authorization_url?: string; already_connected?: boolean; explanation?: string }>('connect_source', { app: app.id })
-        if (out.already_connected) { win?.close(); await load(); return }
-        url = out.auth_url || out.authorization_url
-        if (!url) { win?.close(); toast(out.explanation || `${app.label} can’t be connected from here yet`); return }
-      } else {
-        const conn = client.connectors as unknown as {
-          enableApp: (o: string, id: string, opts?: { name?: string }) => Promise<{ id: string }>
-          createConnectRequest: (o: string, i: { connector_id: string; auth_config_id?: string }) => Promise<{ authorization_url?: string | null }>
-        }
-        const cfg = await conn.enableApp(org, app.connector!, { name: app.id })
-        url = (await conn.createConnectRequest(org, { connector_id: app.connector!, auth_config_id: cfg.id })).authorization_url
-        if (!url) { win?.close(); toast(`${app.label} didn’t offer a sign-in page`); return }
-      }
+      const out = await signInUrl(app, org)
+      if (out.already) { win?.close(); await load(); return }
+      const url = out.url
+      if (!url) { win?.close(); toast(out.explanation || `${app.label} can’t be connected from here yet`); return }
       if (win) win.location.href = url
       else { toast('Your browser blocked the sign-in window — allow pop-ups and try again'); return }
       // up to three minutes of consent, checked every couple of seconds
@@ -220,6 +155,7 @@ export function Profile({ name, email, onClose }: { name: string; email: string;
                 {tm()} is reading <b>{reading}</b> of {SOURCES.length} sources
                 {SOURCES.some((a) => status[a.id] === 'reauth') && <> · <span className="warn">one needs you to sign in again</span></>}
               </p>
+              <ReachSection />
               {accounts.mail.length > 0 && (
                 <section className="profile-sec">
                   <div className="sec-h">Your mailboxes</div>
@@ -251,6 +187,7 @@ export function Profile({ name, email, onClose }: { name: string; email: string;
                     <div className="sec-h">{sec.title}</div>
                     <div className="app-list">
                       {apps.map((a) => <Row key={a.id} app={a} status={status[a.id]} busy={busy} onConnect={(x) => void connect(x)} />)}
+                      {sec.apps === SUGGESTED && <AnyOtherApp />}
                     </div>
                   </section>
                 )
@@ -260,5 +197,171 @@ export function Profile({ name, email, onClose }: { name: string; email: string;
         </div>
       </div>
     </>
+  )
+}
+
+/* ---------------- any other app ---------------- */
+
+/* The lists above are what the desk itself reads and writes. Anything else is connected by
+   asking the assistant in Lemma, which can find and connect any app Lemma supports. */
+function AnyOtherApp() {
+  return (
+    <div className="app-row">
+      <span className="mark"><Plus size={17} /></span>
+      <div className="app-t">
+        <b>Any other app</b>
+        <small>Ask {tm()} in Lemma to connect it: your CRM, a notes app, a project tracker.</small>
+      </div>
+      <a className="btn sm line" href={lemmaPodUrl()} target="_blank" rel="noreferrer">Open Lemma</a>
+    </div>
+  )
+}
+
+/* ---------------- reach the assistant ---------------- */
+
+function Qr({ text, label }: { text: string; label: string }) {
+  const q = useMemo(() => qrPath(text), [text])
+  return (
+    <svg className="reach-qr" viewBox={`0 0 ${q.size} ${q.size}`} role="img" aria-label={label} shapeRendering="crispEdges">
+      <rect width={q.size} height={q.size} fill="#fff" />
+      <path d={q.d} fill="#111" />
+    </svg>
+  )
+}
+
+/* Email, WhatsApp and Telegram: the assistant answers on all three, as itself, with
+   everything it knows. Each row says where to write and sets the channel up if it isn't. */
+function ReachSection() {
+  const toast = useToast()
+  const [r, setR] = useState<Reach | null>(null)
+  const [qr, setQr] = useState<'whatsapp' | null>(null)
+  const [busy, setBusy] = useState<'whatsapp' | 'telegram' | null>(null)
+  const [setup, setSetup] = useState<TelegramSetup | null>(null)
+  const [copied, setCopied] = useState(false)
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    void readReach().then((x) => { if (alive.current) setR(x) }).catch(() => null)
+    return () => { alive.current = false }
+  }, [])
+  if (!r) return null
+  const wa = r.whatsapp
+  const hello = firstMessage(tm())
+
+  async function copy() {
+    if (!r?.email) return
+    try { await navigator.clipboard.writeText(r.email); setCopied(true); setTimeout(() => setCopied(false), 1600) } catch { toast(r.email) }
+  }
+  async function whatsapp() {
+    if (busy) return
+    setBusy('whatsapp')
+    try {
+      const out = await setUpWhatsApp()
+      setR((x) => (x ? { ...x, whatsapp: out } : x))
+      if (out.handle) setQr('whatsapp')
+      else toast('WhatsApp isn’t available in this workspace yet')
+    } catch { toast('WhatsApp couldn’t be set up just now') } finally { setBusy(null) }
+  }
+  /** Opens Lemma's setup bot in Telegram, on the click itself (a window opened later is
+   *  blocked), then waits for the person to name their bot there. */
+  async function telegram() {
+    if (busy) return
+    setBusy('telegram')
+    const win = window.open('', '_blank')
+    try {
+      const s = await startTelegram()
+      setSetup(s)
+      if (win && !win.closed) { win.opener = null; win.location.href = s.launch_url } else win?.close()
+      // naming a bot takes a minute or two; the setup itself runs out in about an hour
+      for (let i = 0; i < 400 && alive.current; i++) {
+        await sleep(3000)
+        const now = await readTelegramSetup(s.setup_id).catch(() => null)
+        if (!now) continue
+        if (telegramReady(now)) {
+          const handle = now.bot_username!
+          setR((x) => (x ? { ...x, telegram: { handle: `@${handle.replace(/^@/, '')}`, link: now.bot_launch_url || telegramLink(handle) } } : x))
+          toast(`Your Telegram bot is ready: @${handle.replace(/^@/, '')}`)
+          return
+        }
+        if (telegramFailed(now)) { toast(now.error || 'That setup ran out. Start it again'); return }
+      }
+    } catch (e) {
+      win?.close()
+      toast(`Telegram couldn’t be set up: ${(e as Error)?.message ?? 'try again'}`)
+    } finally {
+      if (alive.current) { setSetup(null); setBusy(null) }
+    }
+  }
+
+  const showWa = wa.offered || !!wa.handle
+  if (!r.email && !showWa && !r.telegramOffered) return null
+  return (
+    <section className="profile-sec">
+      <div className="sec-h">Reach {tm()}</div>
+      <div className="app-list">
+        {r.email && (
+          <div className="app-row on">
+            <span className="mark"><Mail size={17} /></span>
+            <div className="app-t">
+              <b className="reach-addr">{r.email}</b>
+              <small>Write or forward anything. Your morning brief comes from here, and a reply to it reaches {tm()}.</small>
+            </div>
+            <button className="btn sm line" onClick={() => void copy()}>{copied ? 'Copied' : 'Copy'}</button>
+          </div>
+        )}
+        {showWa && (
+          <div className={`app-row${wa.handle ? ' on' : ''}`}>
+            <SourceMark app="whatsapp" label="WhatsApp" />
+            <div className="app-t">
+              <b>WhatsApp{wa.handle ? ` · ${wa.handle}` : ''}</b>
+              <small>{!wa.handle
+                ? `Message ${tm()} from your phone.`
+                : wa.mine
+                  ? `Write from your number ending ${lastFour(wa.mine)}; it is already linked.`
+                  : 'The first time, it asks for your email and sends a code there.'}</small>
+            </div>
+            {wa.handle ? (
+              <span className="reach-acts">
+                <button className="btn sm line" onClick={() => setQr(qr ? null : 'whatsapp')}>{qr ? 'Hide code' : 'Code'}</button>
+                <a className="btn sm line" href={whatsAppWebLink(wa.handle, hello)} target="_blank" rel="noreferrer">Open</a>
+              </span>
+            ) : (
+              <button className="btn sm line" disabled={!!busy} onClick={() => void whatsapp()}>{busy === 'whatsapp' ? 'Setting up…' : 'Set up'}</button>
+            )}
+          </div>
+        )}
+        {qr === 'whatsapp' && wa.handle && (
+          <div className="reach-qr-row">
+            <Qr text={whatsAppLink(wa.handle, hello)} label={`QR code that opens a WhatsApp chat with ${wa.handle}`} />
+            <small>Scan with your phone’s camera. The message is ready to send.</small>
+          </div>
+        )}
+        {(r.telegram || r.telegramOffered) && (
+          <div className={`app-row${r.telegram ? ' on' : ''}`}>
+            <SourceMark app="telegram" label="Telegram" />
+            <div className="app-t">
+              <b>Telegram{r.telegram?.handle ? ` · ${r.telegram.handle}` : ''}</b>
+              <small>{r.telegram
+                ? `Your own bot for ${tm()}. Message it like a person.`
+                : setup
+                  ? 'Name your bot in Telegram. This updates by itself when it’s made.'
+                  : `A bot of your own for ${tm()}, made inside Telegram in a minute.`}</small>
+            </div>
+            {r.telegram?.link
+              ? <a className="btn sm line" href={r.telegram.link} target="_blank" rel="noreferrer">Open</a>
+              : !r.telegram && <button className="btn sm line" disabled={!!busy} onClick={() => void telegram()}>{busy === 'telegram' ? 'Waiting for Telegram…' : 'Set up'}</button>}
+          </div>
+        )}
+        {setup && (
+          <div className="reach-qr-row">
+            <Qr text={setup.launch_url} label="QR code that opens the Telegram setup on your phone" />
+            <span className="reach-qr-side">
+              <small>On your phone? Scan this to make the bot there instead.</small>
+              <a className="link-q" href={setup.launch_url} target="_blank" rel="noreferrer">Open in Telegram</a>
+            </span>
+          </div>
+        )}
+      </div>
+    </section>
   )
 }

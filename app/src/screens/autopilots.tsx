@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import {
+import { BookOpenText,
   Sparkles, Sun, Layers, Mail, CalendarClock, MessageSquare, MoonStar,
   PenLine, ArrowUpRight, Lightbulb, Zap, type LucideIcon,
 } from 'lucide-react'
@@ -73,6 +73,11 @@ const LABELS: Record<string, Meta> = {
     name: 'Learn your voice',
     what: 'Re-reads your sent mail once a month so every draft keeps sounding like you.',
     icon: PenLine, tint: 'violet',
+  },
+  autopilot_wiki: {
+    name: 'Keep your wiki current',
+    what: 'Every night, reads the day and updates what it understands about you. Your own edits always win.',
+    icon: BookOpenText, tint: 'violet',
   },
   mail_arrived: { name: 'Watch Gmail', what: 'Picks up new Gmail the moment it lands.', icon: Mail, tint: 'grey' },
   calendar_changed: { name: 'Watch Google Calendar', what: 'Notices when something on your calendar changes.', icon: CalendarClock, tint: 'grey' },

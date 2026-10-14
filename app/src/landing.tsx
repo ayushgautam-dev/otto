@@ -1,18 +1,24 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowRight, Check, CheckCheck, PenLine, MessageCircle, Inbox, ReceiptText, Lock, Play, Github, Plus } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { ArrowRight, Check, Lock, Play, Github, Plus, Mail, FileText } from 'lucide-react'
 import { SourceMark } from './brand'
 import { TEMPLATE } from './gate'
 import './landing.css'
 
-/* What somebody sees before they have an Otto of their own.
+/* Otto introducing himself to somebody who does not have one yet.
+
+   Lemma is a place for AI teammates, so the page is a teammate's introduction and not a
+   product tour. It is short on purpose, six blocks:
+     hello (with one film of a morning's work) · reach me by email or WhatsApp ·
+     my work (four samples in one frame, as tabs) · how I work · interview me · hire me.
+   Written in the first person; the films do the telling.
 
    Shown only to a visitor who is not signed in (and to someone signed in who is not a
    member here: they are never going to be let into another person's mail, so they get the
    same offer). A member never sees it: they land straight on their desk.
 
-   The clips are the product itself. They were filmed from this app, running on an
-   invented cast, by the recording rig in /studio; nothing in them is drawn for the page.
-   The page carries its own colours and type so it looks the same from either app. */
+   The films and the three pictures of work are the product itself, recorded from this app
+   running on an invented cast by the rig in /studio. The page carries its own colours and
+   type so it looks the same from either app. */
 
 const ASSET = `${import.meta.env.BASE_URL}landing/`
 
@@ -26,7 +32,8 @@ function Orb({ size = 18, live }: { size?: number; live?: boolean }) {
   return <span className={`lp-orb${live ? ' live' : ''}`} style={{ width: size, height: size }} aria-hidden><i /></span>
 }
 
-function Install({ children = 'Get your own Otto', quiet }: { children?: ReactNode; quiet?: boolean }) {
+/** The one thing the page asks for: a copy of Otto, made on Lemma. */
+function Hire({ children = 'Hire Otto', quiet }: { children?: ReactNode; quiet?: boolean }) {
   return (
     <a className={`lp-btn${quiet ? ' sm' : ''} primary`} href={TEMPLATE.install} target="_blank" rel="noreferrer">
       {children} <ArrowRight size={quiet ? 14 : 16} strokeWidth={2.2} />
@@ -51,21 +58,38 @@ function Reveal({ children, as: Tag = 'div', className = '', delay = 0 }: {
   return <T ref={ref as never} className={`lp-rv${seen ? ' in' : ''} ${className}`} style={delay ? { transitionDelay: `${delay}ms` } : undefined}>{children}</T>
 }
 
-/* ---------------- a clip ---------------- */
+const calm = () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+
+/* ---------------- a film ---------------- */
 
 type Beats = Record<string, number>
 
-/* Each clip is a looping, silent film of the app. It plays only while it is on screen.
-   Beside the film sits a small file saying when each beat starts: the hero's captions
-   follow those, and on a narrow screen `pan:<x>` beats say which part of the frame to
-   look at, so a phone shows the part where something is happening at a readable size. */
-function Clip({ name, alt, ratio = '1180 / 760', eager, look = 0, where = 'otto.apps.lemma.work', onBeats, onTime }: {
+/** The window every film and picture sits in. */
+function Win({ where = 'otto.apps.lemma.work', children }: { where?: string; children: ReactNode }) {
+  return (
+    <div className="lp-win">
+      <div className="lp-win-bar" aria-hidden><i /><i /><i /><span><Lock size={10} /> {where}</span></div>
+      {children}
+    </div>
+  )
+}
+
+/* Each film is a silent recording of the app. It plays only while it is on screen.
+   Beside it sits a small file saying when each beat starts: the hero's captions follow
+   those, and on a narrow screen `pan:<x>` beats say which part of the frame to look at,
+   so a phone shows the part where something is happening at a readable size. */
+function Clip({ name, alt, ratio = '1180 / 760', eager, look = 0, where, once, onBeats, onTime, onEnded }: {
   name: string; alt: string; ratio?: string; eager?: boolean
   /** where a narrow screen looks before the film says otherwise: 0 is the left edge, 100 the right */
   look?: number
   /** what the window's address line says: the app, unless the film is of somewhere else */
   where?: string
-  onBeats?: (b: Beats, seconds: number) => void; onTime?: (t: number) => void
+  /** play through once and say when it ends, instead of looping */
+  once?: boolean
+  onBeats?: (b: Beats, seconds: number) => void
+  /** seconds in, and how much of the film that is (0 to 1) */
+  onTime?: (t: number, part: number) => void
+  onEnded?: () => void
 }) {
   const video = useRef<HTMLVideoElement>(null)
   const view = useRef<HTMLDivElement>(null)
@@ -87,8 +111,7 @@ function Clip({ name, alt, ratio = '1180 / 760', eager, look = 0, where = 'otto.
   useEffect(() => {
     const v = video.current
     if (!v) return
-    const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-    if (calm) { setHeld(true); return }
+    if (calm()) { setHeld(true); return }
     if (typeof IntersectionObserver === 'undefined') { void v.play().catch(() => setHeld(true)); return }
     const io = new IntersectionObserver(([e]) => {
       if (e.isIntersecting) void v.play().catch(() => setHeld(true))
@@ -102,7 +125,7 @@ function Clip({ name, alt, ratio = '1180 / 760', eager, look = 0, where = 'otto.
     const v = video.current
     if (!v) return
     const t = v.currentTime
-    onTime?.(t)
+    onTime?.(t, v.duration ? t / v.duration : 0)
     let x = pans.current.length ? pans.current[0].x : look
     for (const p of pans.current) if (t >= p.at) x = p.x
     view.current?.style.setProperty('--look', `${x}%`)
@@ -116,33 +139,32 @@ function Clip({ name, alt, ratio = '1180 / 760', eager, look = 0, where = 'otto.
 
   return (
     <figure className="lp-clip">
-      <div className="lp-win">
-        <div className="lp-win-bar" aria-hidden><i /><i /><i /><span><Lock size={10} /> {where}</span></div>
+      <Win where={where}>
         <div className="lp-win-view" ref={view} style={{ aspectRatio: ratio, ['--look' as string]: `${look}%` }}>
           <video
-            ref={video} muted loop playsInline preload={eager ? 'auto' : 'none'} poster={`${ASSET}${name}.jpg`}
-            aria-label={alt} onTimeUpdate={tick} onPlaying={() => setStarted(true)} onClick={toggle}
+            ref={video} muted loop={!once} playsInline preload={eager ? 'auto' : 'none'} poster={`${ASSET}${name}.jpg`}
+            aria-label={alt} onTimeUpdate={tick} onPlaying={() => setStarted(true)} onClick={toggle} onEnded={onEnded}
           >
             <source src={`${ASSET}${name}.mp4`} type="video/mp4" />
           </video>
           {held && (
-            <button className="lp-play" onClick={toggle} aria-label="Play the clip">
+            <button className="lp-play" onClick={toggle} aria-label="Play the film">
               <Play size={18} fill="currentColor" /> {started ? 'Resume' : 'Play'}
             </button>
           )}
         </div>
-      </div>
+      </Win>
     </figure>
   )
 }
 
-/* ---------------- the hero film, and the four lines under it ---------------- */
+/* ---------------- the first film, and the four lines that stand in for a description ---------------- */
 
-const STEPS: { beat: string; title: string; line: string }[] = [
-  { beat: 'reads', title: 'Reads', line: 'Three weeks of mail, calendar and call notes.' },
-  { beat: 'finds', title: 'Finds', line: 'Everything still open: who owes what, since when.' },
-  { beat: 'prepared', title: 'Prepares', line: 'The proposal, from Tuesday’s call, Sam’s email and the last one she sent.' },
-  { beat: 'yours', title: 'You send', line: 'One word changed. Nothing leaves without your click.' },
+const STEPS: { beat: string; line: string }[] = [
+  { beat: 'reads', line: 'I read your mail' },
+  { beat: 'finds', line: 'I find what is open' },
+  { beat: 'prepared', line: 'I prepare the work' },
+  { beat: 'yours', line: 'You check it and send' },
 ]
 
 function HeroFilm() {
@@ -152,60 +174,216 @@ function HeroFilm() {
   if (beats) STEPS.forEach((s, i) => { if (at >= (beats[s.beat] ?? Infinity)) step = i })
   return (
     <div className="lp-film">
-      <Clip name="hero" eager ratio="1400 / 875" onBeats={(b) => setBeats(b)} onTime={setAt}
-        alt="Otto reading a mailbox, listing what is still open, then a prepared proposal being opened, edited and sent." />
+      <Clip name="hero" eager onBeats={(b) => setBeats(b)} onTime={(t) => setAt(t)}
+        alt="Otto’s desk on an ordinary morning: the loose ends, then one of them opened with the email it answers, a prepared proposal, one word changed, and sent." />
       <ol className="lp-steps">
         {STEPS.map((s, i) => (
           <li key={s.beat} className={i === step ? 'on' : i < step ? 'done' : ''}>
             <span className="lp-step-n">{i + 1}</span>
-            <b>{s.title}</b>
-            <span>{s.line}</span>
+            <b>{s.line}</b>
           </li>
         ))}
       </ol>
-      <p className="lp-fine">A first run, filmed in Otto itself with the waiting shortened. Every name in it is invented.</p>
+      <p className="lp-fine">Filmed in Otto itself. Every name in it is invented.</p>
     </div>
   )
 }
 
-/* ---------------- chapters ---------------- */
+/* ---------------- away from the desk ---------------- */
 
-function Chapter({ n, id, title, children, clip, alt, extra, where, look }: {
-  n: string; id?: string; title: string; children: ReactNode; clip: string; alt: string; extra?: ReactNode; where?: string; look?: number
-}) {
+/* Otto also works by email (a reply to the morning brief reaches him) and on WhatsApp,
+   and sends the document back in the same conversation. Those conversations happen
+   outside this app, so these two are the only things on the page that are drawn and not
+   filmed. What is in them is work Otto does: a brief before a first meeting, a comparison
+   written up. Nothing here shows him sending to anyone but the person themselves. */
+function Reach() {
   return (
-    <section className="lp-ch" id={id}>
-      <Reveal as="header" className="lp-ch-h">
-        <div>
-          <span className="lp-num">{n}</span>
-          <h2>{title}</h2>
+    <section className="lp-reach-sec">
+      <div className="lp-wrap">
+        <Reveal as="header" className="lp-ch-h">
+          <h2>Email me, or WhatsApp me.</h2>
+          <p>I come back with the work.</p>
+        </Reveal>
+        <div className="lp-reach">
+          <Reveal className="lp-chat">
+            <div className="lp-chat-top">
+              <span className="lp-chat-face"><Mark size={24} /></span>
+              <span><b>Otto</b><small>online</small></span>
+              <span className="lp-via"><WhatsAppMark /> WhatsApp</span>
+            </div>
+            <div className="lp-chat-log">
+              <p className="me" style={{ ['--i' as string]: 0 }}>I meet Felix from Tessel Foods at 3. Brief me.<time>2:10</time></p>
+              <p className="file" style={{ ['--i' as string]: 1 }}>
+                <span className="lp-file"><i><FileText size={18} strokeWidth={1.8} /></i><span><b>Brief: Felix Moreau, Tessel Foods</b><small>Document · 1 page</small></span></span>
+                <time>2:12</time>
+              </p>
+              <p style={{ ['--i' as string]: 2 }}>
+                Short version: he runs supply chain for nine cold-chain depots, he wrote to you after the Freight Expo, and
+                dispatch is his weak spot. Ask how many loads leave late each week.<time>2:12</time>
+              </p>
+            </div>
+          </Reveal>
+          <Reveal className="lp-mail" delay={120}>
+            <div className="lp-mail-top">
+              <b>Re: Thu 15 Oct: 3 meetings, 3 ready to send</b>
+              <span className="lp-via"><Mail size={13} /> Email</span>
+            </div>
+            <div className="lp-mail-log">
+              <div className="me" style={{ ['--i' as string]: 1 }}>
+                <span className="lp-mail-who"><i>PN</i><b>You</b><time>7:42 AM</time></span>
+                <p>Compare the three agency quotes and tell me which to pick.</p>
+              </div>
+              <div style={{ ['--i' as string]: 2 }}>
+                <span className="lp-mail-who"><i className="otto"><Mark size={18} /></i><b>Otto</b><time>7:51 AM</time></span>
+                <p>
+                  Go with Brightwave. It is the only quote that includes the build, and once Studio Kite’s build partner is
+                  added it is also the cheapest. Julia’s price holds until Friday. The comparison is attached.
+                </p>
+                <span className="lp-file att"><i><FileText size={18} strokeWidth={1.8} /></i><span><b>Website relaunch: three quotes compared</b><small>Document · 1 page</small></span></span>
+              </div>
+            </div>
+            <span className="lp-mail-foot">A reply to this morning’s brief</span>
+          </Reveal>
         </div>
-        <div className="lp-ch-say">
-          <p>{children}</p>
-          {extra}
-        </div>
-      </Reveal>
-      <Reveal><Clip name={clip} alt={alt} where={where} look={look} /></Reveal>
+      </div>
     </section>
   )
 }
 
-const ALSO: { icon: typeof Check; title: string; line: string }[] = [
-  { icon: CheckCheck, title: 'Knows when it is handled', line: 'Items you already dealt with are closed for you.' },
-  { icon: PenLine, title: 'Sounds like you', line: 'Your voice is learned from the mail you have sent.' },
-  { icon: MessageCircle, title: 'Not right?', line: 'Correct it once in plain words. Otto reads that before it writes again.' },
-  { icon: Inbox, title: 'Every mailbox', line: 'Work and personal, on one desk.' },
-  { icon: ReceiptText, title: 'Invoices like your last one', line: 'Same format, same tax and bank details, new numbers.' },
-  { icon: Lock, title: 'Private for each teammate', line: 'Add your team. Everyone sees only their own mail.' },
+function WhatsAppMark() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path fill="#25D366" d="M17.472 14.382c-.297-.149-1.758-.867-2.030-.967-.273-.099-.471-.148-.670.150-.197.297-.767.966-.940 1.164-.173.199-.347.223-.644.075-.297-.150-1.255-.463-2.390-1.475-.883-.788-1.480-1.761-1.653-2.059-.173-.297-.018-.458.130-.606.134-.133.298-.347.446-.520.149-.174.198-.298.298-.497.099-.198.050-.371-.025-.520-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.500-.669-.510-.173-.008-.371-.010-.570-.010-.198 0-.520.074-.792.372-.272.297-1.040 1.016-1.040 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.200 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.360.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.570-.347m-5.421 7.403h-.004a9.870 9.870 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.860 9.860 0 01-1.510-5.260c.001-5.450 4.436-9.884 9.888-9.884 2.640 0 5.122 1.030 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.450-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.050 0C5.495 0 .160 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.890-5.335 11.893-11.893a11.821 11.821 0 00-3.480-8.413z" />
+    </svg>
+  )
+}
+
+/* ---------------- my work: four samples in one frame ---------------- */
+
+/* The three pictures are pieces of the app's item panel, photographed as they are (the
+   studio's `kinds` scene saves them). They are not a film: the hero already shows them
+   being opened and sent. */
+const KINDS: { img: string; label: string; alt: string }[] = [
+  { img: 'kind-reply', label: 'A reply', alt: 'A reply to Elena, written and ready to send.' },
+  { img: 'kind-invite', label: 'An invite', alt: 'An invitation for the Lumen Health demo with three free times to choose from.' },
+  { img: 'kind-document', label: 'A document', alt: 'The pilot proposal for Acme Freight, written as a document.' },
+]
+
+interface Work { key: string; tab: string; title: string; line: string; alt: string; clip?: string; where?: string; look?: number; ratio?: string }
+
+const WORK: Work[] = [
+  { key: 'kinds', tab: 'Finished work', title: 'The work arrives finished.', line: 'A reply, an invite or the document.',
+    alt: 'Three things Otto prepared: a reply, an invitation and a document.' },
+  { key: 'brief', tab: 'Morning brief', title: 'I brief you at 7:30.', line: 'One email. Then I leave you alone.', clip: 'brief', where: 'Your inbox, 7:31 AM',
+    alt: 'The morning brief email being opened: what needs you today, the day’s meetings, and what is ready to send.' },
+  { key: 'delegated', tab: 'Delegate', title: 'Ask me for the work.', line: 'I do the reading and write it up.', clip: 'delegated', look: 58,
+    alt: 'A job handed to Otto: it works in the background, then comes back with a customer review and two prepared emails.' },
+  { key: 'boards', tab: 'Pipeline', title: 'I keep your pipeline moving.', line: 'Open a lead, send, and the card moves.', clip: 'boards', look: 100, ratio: '1290 / 830',
+    alt: 'A sales board: a new lead is opened, a prepared invitation is sent, and the lead’s card moves to the next stage.' },
+]
+
+/** how long the pictures hold before the frame moves on by itself */
+const HOLD = 6500
+
+/* One frame, four tabs. Left alone, it plays each sample and moves to the next; the
+   moment the visitor picks a tab it stops moving on and stays where they put it. */
+function WorkStage() {
+  const [at, setAt] = useState(0)
+  const [auto, setAuto] = useState(() => !calm())
+  const [seen, setSeen] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
+  const tabs = useRef<HTMLDivElement>(null)
+  const w = WORK[at]
+
+  /** how far through the current sample we are, drawn as a line under its tab */
+  const part = useCallback((p: number) => { tabs.current?.style.setProperty('--part', String(Math.max(0, Math.min(1, p)))) }, [])
+  const next = useCallback(() => { part(0); setAt((i) => (i + 1) % WORK.length) }, [part])
+  const pick = (i: number) => { setAuto(false); part(0); setAt(i) }
+
+  useEffect(() => {
+    const el = box.current
+    if (!el || typeof IntersectionObserver === 'undefined') { setSeen(true); return }
+    const io = new IntersectionObserver(([e]) => setSeen(e.isIntersecting), { threshold: 0.3 })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+
+  // the pictures have no film to end, so they hold for a few seconds
+  useEffect(() => {
+    if (w.clip || !auto || !seen) return
+    const t0 = performance.now()
+    let raf = 0
+    const tick = () => {
+      const p = (performance.now() - t0) / HOLD
+      if (p >= 1) { next(); return }
+      part(p)
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [at, auto, seen, w.clip, next, part])
+
+  return (
+    <section className="lp-work" id="work">
+      <div className="lp-wrap">
+        <Reveal as="header" className="lp-work-h">
+          <span className="lp-kicker ink">My work</span>
+          <div className="lp-work-say" key={w.key}>
+            <h2>{w.title}</h2>
+            <p>{w.line}</p>
+          </div>
+        </Reveal>
+        <Reveal>
+          <div className={`lp-tabs${auto ? ' auto' : ''}`} role="tablist" aria-label="Samples of my work" ref={tabs}>
+            {WORK.map((x, i) => (
+              <button key={x.key} role="tab" aria-selected={i === at} className={i === at ? 'on' : ''} onClick={() => pick(i)}>
+                {x.tab}
+              </button>
+            ))}
+          </div>
+          <div className="lp-stage" ref={box} role="tabpanel" aria-label={w.title}>
+            {w.clip
+              ? <Clip key={w.key} name={w.clip} alt={w.alt} where={w.where} look={w.look} ratio={w.ratio}
+                  once={auto} onEnded={auto ? next : undefined} onTime={(_t, p) => { if (auto) part(p) }} />
+              : (
+                <figure className="lp-clip" key={w.key}>
+                  <Win>
+                    <div className="lp-win-view kinds" style={{ aspectRatio: '1180 / 760' }} aria-label={w.alt}>
+                      <ul>
+                        {KINDS.map((k) => (
+                          <li key={k.img}>
+                            <b>{k.label}</b>
+                            <img src={`${ASSET}${k.img}.png`} alt={k.alt} />
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </Win>
+                </figure>
+              )}
+          </div>
+        </Reveal>
+      </div>
+    </section>
+  )
+}
+
+const WITH: [string, string][] = [
+  ['gmail', 'Gmail'], ['outlook', 'Outlook'], ['google_calendar', 'Google Calendar'],
+  ['googlemeet', 'Meet'], ['granola', 'Granola'], ['slack', 'Slack'],
+]
+
+const SKILLS = [
+  'Writes in your voice', 'Closes what you already handled', 'Invoices like your last one',
+  'Several mailboxes', 'Private for each teammate',
 ]
 
 const FAQ: { q: string; a: string }[] = [
-  { q: 'What is Lemma?', a: 'The workspace Otto runs in. The install button takes you there, creates your account and makes your own copy of Otto. You open it in the browser; there is nothing to download.' },
-  { q: 'Who can see my mail?', a: 'Only you. Your copy is yours alone. If you add your team, each person connects their own mailbox and sees only their own items and drafts.' },
-  { q: 'Will it send email on its own?', a: 'No. Otto drafts and you press Send, and every send can be taken back for a few seconds. The one thing it sends by itself is the morning brief, and that goes only to your own inbox.' },
-  { q: 'How soon do I see something?', a: 'Installing takes about two minutes. After you connect your mail, the first open items usually appear within ten minutes, and the rest follows while you carry on.' },
-  { q: 'What does it read?', a: 'Your mail, your calendar and, if you connect them, your meeting notes. Newsletters, notifications and cold pitches are set aside and never become to-dos.' },
-  { q: 'Can I remove it?', a: 'Yes. Disconnect your mailbox or delete your copy whenever you like. It is open source, so you can also read exactly what it does.' },
+  { q: 'Where do you live?', a: 'On Lemma, a workspace for AI teammates. The button creates your account and your own copy of me. There is nothing to download.' },
+  { q: 'What do you cost?', a: 'Nothing to start. I am also open source, so you can run me yourself for free.' },
+  { q: 'Who can see my mail?', a: 'Only you. If you add your team, each person sees only their own.' },
+  { q: 'Do you send on your own?', a: 'No. I draft and you press Send. The one thing I send myself is your morning brief, and that goes only to you.' },
+  { q: 'Can I let you go?', a: 'Yes. Disconnect your mailbox or delete your copy whenever you like.' },
 ]
 
 /* ---------------- the page ---------------- */
@@ -223,7 +401,7 @@ export default function Landing({ signIn, visitor, onSwitch, member }: {
   useEffect(() => {
     document.body.classList.add('lp-body')
     const title = document.title
-    document.title = 'Otto: a chief of staff for your inbox'
+    document.title = 'Otto, your AI chief of staff'
     const on = () => setStuck(window.scrollY > 12)
     on()
     window.addEventListener('scroll', on, { passive: true })
@@ -234,7 +412,7 @@ export default function Landing({ signIn, visitor, onSwitch, member }: {
     <div className="lp">
       {visitor && (
         <div className="lp-note">
-          <span>{visitor}, this Otto belongs to someone else. Yours is one click away.</span>
+          <span>{visitor}, I already work for someone here. Your own Otto is one click away.</span>
           {onSwitch && <button onClick={onSwitch}>Use another account</button>}
         </div>
       )}
@@ -243,152 +421,74 @@ export default function Landing({ signIn, visitor, onSwitch, member }: {
         <div className="lp-wrap lp-top-in">
           <a className="lp-brand" href="#top" aria-label="Otto"><Mark /> <span>Otto</span></a>
           <nav className="lp-nav" aria-label="Sections">
-            <a href="#does">What it does</a>
-            <a href="#charge">Privacy</a>
-            <a href="#start">How to start</a>
+            <a href="#work">My work</a>
+            <a href="#how">How I work</a>
+            <a href="#start">First day</a>
           </nav>
           <span className="lp-grow" />
           {member ? <a className="lp-btn sm ghost" href={import.meta.env.BASE_URL}>Open Otto</a>
             : signIn ? <button className="lp-btn sm ghost" onClick={signIn}>Sign in</button> : null}
-          <Install quiet>Get your Otto</Install>
+          <Hire quiet />
         </div>
       </header>
 
       <main id="top">
-        {/* ---- hero ---- */}
+        {/* ---- hello ---- */}
         <section className="lp-hero">
           <div className="lp-wrap">
             <div className="lp-hero-copy">
-              <span className="lp-eyebrow"><Orb size={14} live /> Your AI chief of staff</span>
-              <h1>The work you promised is already done.</h1>
-              <p className="lp-lede">
-                Otto reads your mail, calendar and meeting notes, catches every promise you made, and prepares the reply,
-                the invite or the document before you sit down. You read it and press Send.
-              </p>
+              <span className="lp-face"><Mark size={46} /></span>
+              <span className="lp-eyebrow">AI chief of staff <i /> a teammate on Lemma</span>
+              <h1>Hi, I’m Otto.<br />I keep your promises.</h1>
               <div className="lp-cta">
-                <Install />
-                <a className="lp-btn ghost" href="#does">See what it does</a>
+                <Hire />
+                <a className="lp-btn ghost" href="#work">See my work</a>
               </div>
-              <p className="lp-under">Your own private copy, set up in a few minutes. Open source.</p>
+              {/* the top of a résumé, in one line */}
+              <ul className="lp-facts">
+                <li>Reports only to you</li>
+                <li>Free to start</li>
+                <li className="with">
+                  Works with
+                  <span className="lp-marks">{WITH.map(([app, label]) => <span key={app} title={label}><SourceMark app={app} /></span>)}</span>
+                </li>
+              </ul>
             </div>
             <HeroFilm />
           </div>
         </section>
 
-        {/* ---- works with ---- */}
-        <section className="lp-with">
-          <div className="lp-wrap">
-            <p>Reads where your promises are made</p>
-            <ul>
-              {[['gmail', 'Gmail'], ['outlook', 'Outlook'], ['google_calendar', 'Google Calendar'], ['googlemeet', 'Google Meet'], ['granola', 'Granola'], ['slack', 'Slack']].map(([app, label]) => (
-                <li key={app}><SourceMark app={app} /> {label}</li>
-              ))}
-            </ul>
-          </div>
-        </section>
+        {/* ---- reach me ---- */}
+        <Reach />
 
-        {/* ---- the problem ---- */}
-        <section className="lp-why">
-          <div className="lp-wrap lp-why-in">
-            <Reveal><h2>The hard work gets done. The small promises slip.</h2></Reveal>
-            <Reveal className="lp-slips" delay={80}>
-              <ul>
-                <li><i className="mine" /><span>The proposal you said you would send by Friday</span><em>2d</em></li>
-                <li><i className="mine" /><span>The introduction you offered on a call</span><em>5d</em></li>
-                <li><i className="theirs" /><span>The person still waiting to hear back</span><em>1w</em></li>
-              </ul>
-              <p>They sit in a hundred threads, and you remember them when someone chases.</p>
-            </Reveal>
-          </div>
-        </section>
+        {/* ---- my work ---- */}
+        <WorkStage />
 
-        {/* ---- what it does ---- */}
-        <div className="lp-wrap" id="does">
-          <Chapter n="01" title="It catches every promise." clip="caught"
-            alt="Otto’s Today page listing open items by topic, then one item opened to show the sentence in the email it came from.">
-            Otto keeps only what is still open: what you owe, what you are owed, who, and since when. Each item links back to
-            the sentence it came from.
-          </Chapter>
-
-          <Chapter n="02" title="A reply, an invite, or the document." clip="prepared"
-            alt="A prepared meeting invitation with three free times; one is picked and the invite is sent."
-            extra={<ul className="lp-tags"><li>The email, in your voice</li><li>Times you are really free</li><li>The proposal or invoice itself</li></ul>}>
-            If the answer is a sentence, Otto writes the email. If it needs a call, it offers times you are really free. If you
-            promised a proposal or an invoice, it writes that too, following the last one you sent.
-          </Chapter>
-
-          <Chapter n="03" title="One email at 7:30." clip="brief" where="Your inbox, 7:31 AM"
-            alt="The morning brief email being opened: what needs you today, the day’s meetings, and what is ready to send.">
-            Today’s meetings, what you owe the people in them, and what is waiting for your Send. That is the only time Otto
-            interrupts you.
-          </Chapter>
-
-          <Chapter n="04" title="Ask for the work itself." clip="asked" look={58}
-            alt="A question typed to Otto, which reads three agency quotes and answers with a one-page comparison."
-            extra={<ul className="lp-tags ask"><li>What did I promise on my last call?</li><li>Compare the three agency quotes</li><li>Who am I waiting on this week?</li></ul>}>
-            Compare three quotes. Research a company before the first call. Recap a month of threads with a customer. Otto
-            reads what it needs, says where each fact came from, and files the document.
-          </Chapter>
-
-          <Chapter n="05" title="Pipelines that build themselves." clip="boards" look={100}
-            alt="A sales board and a hiring board, each card showing its stage, why it moved and how long it has been there.">
-            When three or more people are in the same process, whether hiring, sales or fundraising, Otto starts a board in your
-            words and moves the cards as the mail moves.
-          </Chapter>
-        </div>
-
-        {/* ---- also ---- */}
-        <section className="lp-also">
-          <div className="lp-wrap">
-            <Reveal><h2>And the quiet things.</h2></Reveal>
-            <ul>
-              {ALSO.map((a, i) => (
-                <Reveal as="li" key={a.title} delay={(i % 3) * 70}>
-                  <span className="lp-ic"><a.icon size={18} strokeWidth={1.9} /></span>
-                  <b>{a.title}</b>
-                  <span>{a.line}</span>
-                </Reveal>
-              ))}
-            </ul>
-          </div>
-        </section>
-
-        {/* ---- you stay in charge ---- */}
-        <section className="lp-charge" id="charge">
+        {/* ---- how I work ---- */}
+        <section className="lp-charge" id="how">
           <div className="lp-wrap">
             <Reveal>
-              <span className="lp-eyebrow dark">You stay in charge</span>
-              <h2>Otto prepares.<br />You approve.</h2>
+              <span className="lp-kicker">How I work</span>
+              <h2>I prepare.<br />You approve.</h2>
             </Reveal>
-            <ul>
-              <Reveal as="li"><Check size={18} strokeWidth={2.4} /><div><b>Nothing leaves without your click.</b><span>Every email and invite waits for your Send, and can be taken back for a few seconds after.</span></div></Reveal>
-              <Reveal as="li" delay={70}><Check size={18} strokeWidth={2.4} /><div><b>It is your own copy.</b><span>Your mail stays in your own workspace. Nobody else is in it unless you add them.</span></div></Reveal>
-              <Reveal as="li"><Check size={18} strokeWidth={2.4} /><div><b>Careful on purpose.</b><span>An invitation is not an offer, silence is not a no, and cold pitches never become to-dos.</span></div></Reveal>
-              <Reveal as="li" delay={70}><Check size={18} strokeWidth={2.4} /><div><b>Open source.</b><span>Read every line, or change it to fit how you work. <a href={TEMPLATE.repo} target="_blank" rel="noreferrer"><Github size={13} /> See the code</a></span></div></Reveal>
-            </ul>
+            <div>
+              <ul className="lp-rules">
+                <Reveal as="li"><Check size={19} strokeWidth={2.4} /><span>Nothing is sent without your click.</span></Reveal>
+                <Reveal as="li" delay={70}><Check size={19} strokeWidth={2.4} /><span>Your mail stays yours. You get your own copy of me.</span></Reveal>
+                <Reveal as="li" delay={140}><Check size={19} strokeWidth={2.4} /><span>I am open source. <a href={TEMPLATE.repo} target="_blank" rel="noreferrer"><Github size={14} /> See the code</a></span></Reveal>
+              </ul>
+              <Reveal className="lp-skills" delay={120}>
+                <span>Other skills</span>
+                <ul>{SKILLS.map((s) => <li key={s}>{s}</li>)}</ul>
+              </Reveal>
+            </div>
           </div>
         </section>
 
-        {/* ---- three steps ---- */}
-        <section className="lp-start" id="start">
-          <div className="lp-wrap">
-            <Reveal><h2>Three steps to a clear desk.</h2></Reveal>
-            <ol>
-              <Reveal as="li"><span>1</span><b>Install your copy</b><p>One click. It takes about two minutes, and it is yours alone.</p></Reveal>
-              <Reveal as="li" delay={80}><span>2</span><b>Connect your mail</b><p>Sign in with Google or Microsoft. Calendar and meeting notes are optional.</p></Reveal>
-              <Reveal as="li" delay={160}><span>3</span><b>See what is waiting</b><p>Otto reads your last three weeks and shows you what is still open.</p></Reveal>
-            </ol>
-            <Reveal className="lp-start-cta">
-              <Install />
-              <span>The button opens Lemma, the workspace Otto runs in, and makes your copy there.</span>
-            </Reveal>
-          </div>
-        </section>
-
-        {/* ---- questions ---- */}
+        {/* ---- interview me ---- */}
         <section className="lp-faq">
           <div className="lp-wrap lp-faq-in">
-            <Reveal><h2>Questions</h2></Reveal>
+            <Reveal><h2>Interview me</h2></Reveal>
             <div>
               {FAQ.map((f) => (
                 <details key={f.q}>
@@ -400,13 +500,19 @@ export default function Landing({ signIn, visitor, onSwitch, member }: {
           </div>
         </section>
 
-        {/* ---- closing ---- */}
-        <section className="lp-end">
+        {/* ---- hire me: the first day, and the button ---- */}
+        <section className="lp-end" id="start">
           <div className="lp-wrap">
             <Reveal>
               <Orb size={54} live />
-              <h2>Start tomorrow with a clear desk.</h2>
-              <div className="lp-cta"><Install /></div>
+              <h2>Let me clear your desk.</h2>
+              <ol className="lp-day" aria-label="My first day">
+                <li><span>1</span>Hire me</li>
+                <li><span>2</span>Connect your mail</li>
+                <li><span>3</span>See what is waiting</li>
+              </ol>
+              <div className="lp-cta"><Hire /></div>
+              <p className="lp-under">Free to start. Open source.</p>
             </Reveal>
           </div>
         </section>
@@ -415,7 +521,7 @@ export default function Landing({ signIn, visitor, onSwitch, member }: {
       <footer className="lp-foot">
         <div className="lp-wrap">
           <span className="lp-brand"><Mark size={22} /> <span>Otto</span></span>
-          <span>Built by Ayush Gautam on <a href="https://lemma.work" target="_blank" rel="noreferrer">Lemma</a></span>
+          <span>An AI teammate on <a href="https://lemma.work" target="_blank" rel="noreferrer">Lemma</a>, built by Ayush Gautam</span>
           <span className="lp-grow" />
           <a href={TEMPLATE.repo} target="_blank" rel="noreferrer">Open source on GitHub</a>
           {signIn && <button onClick={signIn}>Sign in</button>}

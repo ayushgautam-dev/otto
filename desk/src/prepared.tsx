@@ -6,6 +6,7 @@ import { useAccounts, useThreadAccount, accountLabel } from './accounts'
 import { Avatar, Markdown, Orb, useToast } from './ui'
 import { useNav } from './nav'
 import { tm } from './teammate'
+import { asChoices, choose, type Choices } from './choices'
 
 /* What Lem prepared, drawn as the thing itself: a letter, an invitation, a document.
    You read it the way the other person will, change what you want, press one button.
@@ -30,6 +31,8 @@ export interface DraftRow {
   avatar_url?: string | null
   thread_ref?: string | null
   obligation?: string | null
+  /** set when the reply turns on a decision only the person can make (see choices.ts) */
+  options?: unknown
   [k: string]: unknown
 }
 
@@ -52,7 +55,7 @@ interface Meeting { title?: string; duration_min?: number; attendees?: string[];
 
 const DRAFT_SELECT = `
   select d.id, d.loop_id, d.to_person_id, d.kind, d.subject, d.body, d.to_emails, d.cc_emails,
-         d.meeting, d.note, d.status, coalesce(p.name,'') as person, p.email as person_email,
+         d.meeting, d.note, d.status, d.options, coalesce(p.name,'') as person, p.email as person_email,
          p.avatar_url, l.thread_ref, l.obligation
   from drafts d
   left join people p on p.id = d.to_person_id
@@ -190,8 +193,11 @@ function HeldButton({ held, label, icon, disabled, onGo }: {
   return <button className="send" disabled={disabled} onClick={onGo}>{icon} {label}</button>
 }
 
-async function closeAfterSend(d: DraftRow, how: string) {
+async function closeAfterSend(d: DraftRow, sent: string) {
   const now = new Date().toISOString()
+  // the answer they picked goes on the record with it, so it is never guessed again
+  const c = asChoices(d.options)
+  const how = c && c.chosen !== null ? `${sent}: ${c.choices[c.chosen].label}` : sent
   await records.update('drafts', d.id, { status: 'sent', subject: d.subject ?? '', body: d.body ?? '' })
   if (d.loop_id) {
     await records.update('loops', d.loop_id, {
@@ -235,7 +241,11 @@ function docAsHtml(d: DocRow): string {
     + `<h2 style="font-size:18px;margin:0 0 12px">${esc(d.title)}</h2>${link}${inner}`
 }
 
-export function Letter({ draft, onSent, docs = [] }: { draft: DraftRow; onSent?: () => void; docs?: DocRow[] }) {
+export function Letter({ draft, onSent, docs = [], onEdit }: {
+  draft: DraftRow; onSent?: () => void; docs?: DocRow[]
+  /** told of every change to the subject and text (the choices keep each version's edits) */
+  onEdit?: (subject: string, body: string) => void
+}) {
   const toast = useToast()
   const { bump } = useNav()
   const initialTo = asList(draft.to_emails)
@@ -267,6 +277,7 @@ export function Letter({ draft, onSent, docs = [] }: { draft: DraftRow; onSent?:
     el.style.height = 'auto'
     el.style.height = `${Math.max(el.scrollHeight, 160)}px`
   }, [body])
+  useEffect(() => { onEdit?.(subject, body) }, [subject, body])
 
   async function reallySend() {
     setState('sending')
@@ -565,11 +576,79 @@ export function Paper({ doc, reader }: { doc: DocRow; reader?: boolean }) {
 
 /* ---------------- pick the right shape ---------------- */
 
-export function Prepared({ draft, onSent, docs }: { draft: DraftRow; onSent?: () => void; docs?: DocRow[] }) {
+export function Prepared({ draft, onSent, docs, onDirect }: {
+  draft: DraftRow; onSent?: () => void; docs?: DocRow[]
+  /** "Something else": the person says which way in their own words and the assistant writes it */
+  onDirect?: (direction: string) => void
+}) {
+  const c = asChoices(draft.options)
+  if (c) return <Decided draft={draft} c={c} onSent={onSent} docs={docs} onDirect={onDirect} />
+  return <Shaped draft={draft} onSent={onSent} docs={docs} />
+}
+
+function Shaped({ draft, onSent, docs, onEdit }: { draft: DraftRow; onSent?: () => void; docs?: DocRow[]; onEdit?: (s: string, b: string) => void }) {
   if ((draft.kind ?? '') === 'meeting' && asMeeting(draft.meeting)?.slots?.length) {
     return <Invitation draft={draft} onSent={onSent} />
   }
-  return <Letter draft={draft} onSent={onSent} docs={docs} />
+  return <Letter draft={draft} onSent={onSent} docs={docs} onEdit={onEdit} />
+}
+
+/* ---------------- a decision that is theirs ---------------- */
+
+/* The reply turns on a yes or no only the person can make, and nothing on record says which
+   way they went. So it asks first: one button per answer, each already written. Once one is
+   picked the letter is that version, and the answers stay above it to switch between. */
+function Decided({ draft, c, onSent, docs, onDirect }: {
+  draft: DraftRow; c: Choices; onSent?: () => void; docs?: DocRow[]; onDirect?: (direction: string) => void
+}) {
+  const { bump } = useNav()
+  const toast = useToast()
+  const edits = useRef<{ subject: string; body: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [other, setOther] = useState(false)
+  const [say, setSay] = useState('')
+  const first = (draft.person || '').split(' ')[0] || 'them'
+
+  async function pick(i: number) {
+    if (busy || i === c.chosen) return
+    setBusy(true)
+    try { await choose(draft.id, c, i, edits.current); edits.current = null; bump() }
+    catch (e) { toast(`That didn’t stick: ${(e as Error)?.message ?? 'try again'}`) }
+    finally { setBusy(false) }
+  }
+  function direct() {
+    const t = say.trim()
+    if (!t || !onDirect) return
+    setOther(false); setSay('')
+    onDirect(t)
+  }
+
+  return (
+    <>
+      <div className={`choose${c.chosen === null ? ' ask' : ''}`}>
+        <div className="choose-q">{c.question || `How do you want to answer ${first}?`}</div>
+        <div className="choose-row" role="group" aria-label="Your answer">
+          {c.choices.map((x, i) => (
+            <button key={i} className={`chip-btn${i === c.chosen ? ' on' : ''}`} aria-pressed={i === c.chosen}
+              disabled={busy} onClick={() => void pick(i)}>{x.label}</button>
+          ))}
+          {onDirect && !other && <button className="link-q" onClick={() => setOther(true)}>Something else</button>}
+        </div>
+        {other && (
+          <div className="choose-say">
+            <input autoFocus value={say} placeholder={`Which way? ${tm()} writes it`}
+              onChange={(e) => setSay(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') direct(); if (e.key === 'Escape') setOther(false) }} />
+            <button className="btn sm line" disabled={!say.trim()} onClick={direct}>Write it</button>
+          </div>
+        )}
+      </div>
+      {c.chosen !== null && (
+        <Shaped key={`${draft.id}:${c.chosen}`} draft={draft} onSent={onSent} docs={docs}
+          onEdit={(subject, body) => { edits.current = { subject, body } }} />
+      )}
+    </>
+  )
 }
 
 /** Referenced from chat by id (`[[draft:…]]` / `[[doc:…]]`): a chip that opens the real
@@ -585,6 +664,19 @@ export function WorkChip({ kind, id }: { kind: 'draft' | 'doc'; id: string }) {
     if (!row) return null
     const first = (row.person || '').split(' ')[0]
     const meeting = row.kind === 'meeting'
+    const c = asChoices(row.options)
+    if (c && c.chosen === null && row.status === 'pending') {
+      return (
+        <button className="workchip" onClick={() => row.loop_id && open({ type: 'loop', id: row.loop_id })}>
+          <span className="workchip-ic"><Send size={14} /></span>
+          <span className="workchip-t">
+            <b>{c.question || `How do you want to answer ${first || 'them'}?`}</b>
+            <small>{c.choices.map((x) => x.label).join(' · ')}</small>
+          </span>
+          <span className="workchip-s">Choose →</span>
+        </button>
+      )
+    }
     return (
       <button className="workchip" onClick={() => row.loop_id && open({ type: 'loop', id: row.loop_id })}>
         <span className="workchip-ic">{meeting ? <CalendarPlus size={14} /> : <Send size={14} />}</span>

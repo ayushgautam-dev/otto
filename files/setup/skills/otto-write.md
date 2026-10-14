@@ -40,12 +40,52 @@ Then read enough to sound like someone who was actually there:
 - Open by referring to the actual thing — the interview, the invoice, the demo —
   not "I hope this email finds you well".
 - Say the substance. If the loop is a decision owed, the draft has to contain
-  the decision or an honest date by which it will come.
+  the decision or an honest date by which it will come, and the decision has to be
+  theirs: see *When the answer is theirs to choose*.
 - Close with the next step, concretely.
 - No filler, no apology padding, no "just circling back" unless the person's
   own voice document uses that register.
 - Match the medium: `source: "slack"` means no subject line and a shorter,
   lowercase-friendly message. Email gets a subject.
+
+## When the answer is theirs to choose
+
+Some replies carry a decision only the person can make: whether to take up a proposal, a
+sponsorship, a partnership, an invitation or an offer; whether to accept a price, terms or
+a date; whether to give their time, money, name or an introduction. This does not depend
+on the loop's `kind`. A "reply owed" or a "next step" often hides exactly this yes or no.
+
+First look for the decision in the record: anything they wrote on the thread, meeting
+notes, `timeline_events` quotes, `corrections`, and what they said in this conversation or
+in the direction you were given. If it is there, write that answer as one message, as
+usual.
+
+If it is not there, **do not choose for them.** Momentum is not a decision: a call taken,
+a brochure read, a polite "thanks, will look" are not a yes. Write one complete message
+per real choice instead, so they pick before anything is shown as ready to send:
+
+- **Two or three choices**, the real alternatives for this matter. When the ask is a yes
+  or no, always the yes and the polite no. A third only when it is a genuine option: a
+  smaller version of the ask, a later date, or a day by which they will decide.
+- **Labels of one to four words, verb first**, in plain words for this matter: "Sponsor
+  it", "Pass this time", "Decide by Friday". Never "Option A" or "Positive reply".
+- **Each choice is a finished message** in their voice, following every rule in this skill.
+  The no is as warm and as specific as the yes, and closes the matter cleanly. A yes that
+  needs a call offers real times from `find_free_slots`.
+- **Into the one pending draft:** `options` = `{"question": "<the decision as a short
+  question>", "choices": [{"label", "subject", "body", "kind"}, …]}` and the row's own
+  `body` left empty; the app fills it with the version they pick. A choice that is a
+  calendar invitation has `kind: "meeting"` and its own `meeting`; every other choice is
+  `kind: "email"`. `note` says what you wrote and that the decision is not on record, in
+  plain words: no mention of cards, buttons or choosing screens.
+
+> Priya at Brightline asked whether they would sponsor the founders' dinner. They took
+> her call; nothing written says which way they went. → question "Sponsor the Brightline
+> dinner?", choices "Sponsor it" / "Pass this time" / "Decide by Friday"; note "Wrote the
+> reply to Priya three ways; whether to sponsor the dinner isn't on record."
+
+When they settle it later ("decline it", "yes, but only the smaller package"), write that
+one message into `body` and set `options` to null.
 
 ## Scheduling loops — offer real times
 
@@ -227,6 +267,7 @@ Write the row yourself, into `drafts`:
 | `kind` | `email`, `meeting` or `document` |
 | `note` | the one line above |
 | `to_emails`, `cc_emails`, `meeting` | as above |
+| `options` | only when the answer is theirs to choose (see that section); otherwise null |
 
 **One pending draft per loop.** Before you create one, check whether a `pending`
 draft already exists for that `loop_id`. If it does, you are **revising**:
@@ -234,7 +275,7 @@ draft already exists for that `loop_id`. If it does, you are **revising**:
 obligation is the bug that makes the person distrust the queue.
 
 Then reply to the person in one or two lines: what you wrote and why that
-angle — and end your message with the card marker on its own line, `[[draft:<draft id>]]`
+angle (with choices, the decision it turns on; the card asks them which way) — and end your message with the card marker on its own line, `[[draft:<draft id>]]`
 (and `[[doc:<deliverable id>]]` for a document), so the app shows the card right there in
 the conversation. Never paste the email or the document into the chat as text.
 
@@ -244,7 +285,9 @@ the conversation. Never paste the email or the document into the chat as text.
 - Never invent a fact, a number, a date or a commitment. If you need something
   the record does not have, leave a clearly marked `[…]` for the person.
 - Never contradict an open loop or a promise already made.
-- One message. Do not write alternatives and ask them to choose.
+- One message. Never write variations in tone or length for them to pick from. The one
+  exception is a decision that is theirs to make: then one message per real choice, as
+  *When the answer is theirs to choose* says.
 
 
 

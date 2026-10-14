@@ -557,6 +557,18 @@ body.focus-wide .focus { --focus-w: min(64vw, 1040px); }
   box-shadow: var(--shadow-2), inset 0 0 0 1px var(--line);
 }
 .letter + .letter, .letter + .paper, .paper + .paper { margin-top: 12px; }
+.choose { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.choose.ask { padding: 16px; border-radius: var(--r); background: var(--card); box-shadow: inset 0 0 0 1px var(--line); }
+.choose-q { font-size: 15px; font-weight: 600; color: var(--ink); }
+.choose:not(.ask) .choose-q { font-size: 13px; font-weight: 550; color: var(--ink-2); }
+.choose-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.choose-row .link-q { margin-left: 4px; }
+.choose-say { display: flex; gap: 8px; }
+.choose-say input { flex: 1; min-width: 0; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--raised); font: inherit; font-size: 13px; color: var(--ink); }
+.choose-say input:focus { outline: none; border-color: var(--ink-4); }
+.redo-say { display: flex; gap: 8px; flex: 1; min-width: 0; }
+.redo-say input { flex: 1; min-width: 0; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--raised); font: inherit; font-size: 13px; color: var(--ink); }
+.redo-say input:focus { outline: none; border-color: var(--ink-4); }
 .letter::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 4px; border-radius: var(--r) var(--r) 0 0;
   background: repeating-linear-gradient(135deg, var(--ember) 0 10px, transparent 10px 16px, var(--slate) 16px 26px, transparent 26px 32px); opacity: .5; }
 .letter.sent { display: flex; align-items: center; gap: 8px; color: var(--moss); font-weight: 600; background: var(--moss-soft); box-shadow: none; }
@@ -992,6 +1004,13 @@ body.focus-wide .focus { --focus-w: min(64vw, 1040px); }
 .app-t b { font-weight: 600; font-size: 14px; }
 .app-t small { font-size: 12.5px; color: var(--ink-3); line-height: 1.4; }
 .app-on { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; color: var(--moss); white-space: nowrap; }
+.reach-addr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reach-acts { display: inline-flex; gap: 6px; flex: none; }
+.reach-qr-row { display: flex; align-items: center; gap: 14px; padding: 4px 14px 8px; }
+.reach-qr-side { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.reach-qr-row small { font-size: 12.5px; color: var(--ink-3); line-height: 1.4; }
+.reach-qr { width: 132px; height: 132px; flex: none; border-radius: 12px; background: #fff; box-shadow: inset 0 0 0 1px var(--line); }
+a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 
 /* ---------------- first run: short cards ---------------- */
 .fr-sub { font-size: 16px; color: var(--ink-2); margin: -4px 0 24px; }
@@ -1122,3 +1141,24 @@ button.book-gh:hover .book-gt { text-decoration: underline; }
 .fr-wa-number { font: 500 20px var(--sans); letter-spacing: -.01em; }
 .fr-wa-msg { font-size: 14px; color: var(--ink-2); margin-bottom: 12px; }
 .fr-wa a.btn { text-decoration: none; }
+
+/* ---------------- wiki ---------------- */
+.wiki-cols { display: grid; grid-template-columns: minmax(0, 720px) minmax(220px, 300px); gap: 48px; align-items: start; }
+.wiki-main { display: flex; flex-direction: column; gap: 30px; min-width: 0; }
+.wiki-sec-h { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.wiki-sec-h h2 { font-size: 16px; font-weight: 650; letter-spacing: -.01em; margin: 0; }
+.wiki-body { font-size: 14.5px; line-height: 1.6; color: var(--ink-2); }
+.wiki-body ul { margin: 0; padding-left: 18px; }
+.wiki-body li + li { margin-top: 4px; }
+.wiki-body p { margin: 0 0 8px; }
+.wiki-none { font-size: 13.5px; color: var(--ink-3); margin: 0; }
+.wiki-edit textarea { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--raised); font: inherit; font-size: 14px; line-height: 1.55; color: var(--ink); resize: vertical; }
+.wiki-edit textarea:focus { outline: none; border-color: var(--ink-4); }
+.wiki-edit-foot { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 8px; }
+.wiki-learned { margin-top: -18px; padding: 10px 14px; border-radius: 10px; background: var(--paper-2); }
+.wiki-learned summary { cursor: pointer; font-size: 13px; font-weight: 550; color: var(--ink-2); }
+.wiki-learned[open] summary { margin-bottom: 8px; }
+.wiki-learned .wiki-none { margin-top: 8px; font-size: 12.5px; }
+.wiki-log { position: sticky; top: 24px; }
+.wiki-log .wiki-body { font-size: 13px; color: var(--ink-3); }
+@media (max-width: 960px) { .wiki-cols { grid-template-columns: minmax(0, 1fr); gap: 28px; } .wiki-log { position: static; } }

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthGuard, useCurrentUser } from 'lemma-sdk/react'
-import { Sun, Users, Layers, FileText, Zap, Moon, SunMedium, Search } from 'lucide-react'
+import { Sun, Users, Layers, FileText, Zap, Moon, SunMedium, Search, BookOpenText } from 'lucide-react'
 import { lemmaClient } from './lemma-client'
 import { useSql, rev, firstName } from './lib'
 import { ToastProvider, Avatar } from './ui'
@@ -16,6 +16,7 @@ import { Workstreams } from './screens/workstreams'
 import { People } from './screens/people'
 import { Docs } from './screens/docs'
 import { Autopilots } from './screens/autopilots'
+import { Wiki } from './screens/wiki'
 import { FirstRun, needsFirstRun } from './screens/firstrun'
 import { Profile } from './profile'
 import { ensureMyAutopilots, ensureSkills } from './autopilot-sync'
@@ -71,6 +72,7 @@ function Rail({ email, name, catching }: { email: string; name: string; catching
         <Item to="/workstreams" label="Work" icon={Layers} />
         <Item to="/people" label="People" icon={Users} />
         <Item to="/docs" label="Docs" icon={FileText} />
+        <Item to="/wiki" label="Wiki" icon={BookOpenText} />
         <Item to="/autopilots" label="Auto" icon={Zap} />
       </div>
       <div className="rail-foot">
@@ -108,6 +110,7 @@ function Shell({ name, email }: { name: string; email: string }) {
   else if (route.startsWith('/people')) screen = <People />
   else if (route.startsWith('/docs')) screen = <Docs />
   else if (route.startsWith('/autopilots')) screen = <Autopilots />
+  else if (route.startsWith('/wiki')) screen = <Wiki />
   else screen = <Today userName={name} />
 
   // back to the top when changing page

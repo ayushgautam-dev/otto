@@ -16,6 +16,7 @@ import { tm } from '../teammate'
 import { turnOnByKey } from '../autopilot-sync'
 import { useOpenTask, type TaskRow } from '../tasks'
 import { useCatching, useProgress, useFinishedSummary, type Progress } from '../backfill'
+import { asChoices } from '../choices'
 /* The Feed answers "what is new and what needs me?".
    A workstream only appears here when it actually needs something. */
 
@@ -134,8 +135,8 @@ function Strip() {
 function Prepared() {
   const { version, openSheet } = useNav()
   const [all, setAll] = useState(false)
-  const q = useSql<{ loop_id: string; kind: string; person: string; obligation: string; side: string; docs: number }>(rev(
-    `select distinct on (l.id) l.id as loop_id, coalesce(d.kind,'email') as kind,
+  const q = useSql<{ loop_id: string; kind: string; person: string; obligation: string; side: string; docs: number; options?: unknown }>(rev(
+    `select distinct on (l.id) l.id as loop_id, coalesce(d.kind,'email') as kind, d.options,
             coalesce(p.name,'') as person, l.obligation, l.side,
             (select count(*) from deliverables x where x.loop_id=l.id and x.status <> 'discarded') as docs
      from drafts d join loops l on l.id=d.loop_id and l.status='open'
@@ -143,8 +144,11 @@ function Prepared() {
      where d.status='pending'
      order by l.id, d.created_at desc`, version))
   if (!q.items.length) return null
+  // written as choices and not yet picked: a question for them, not a letter to send
+  const ask = (r: typeof q.items[number]) => { const c = asChoices(r.options); return c && c.chosen === null ? c : null }
   const label = (r: typeof q.items[number]) => {
     const who = r.person.split(' ')[0] || 'them'
+    if (ask(r)) return `Your call on ${who}`
     if (Number(r.docs) > 0) return `Document + email to ${who}`
     if (r.kind === 'meeting') return `Times for ${who}`
     return r.side === 'them' ? `Nudge to ${who}` : `Email to ${who}`
@@ -157,7 +161,7 @@ function Prepared() {
         <button key={r.loop_id} className="prep-r" onClick={() => openSheet({ type: 'loop', id: r.loop_id })}>
           {Number(r.docs) > 0 ? <FileText size={14} /> : r.kind === 'meeting' ? <CalendarPlus size={14} /> : <Send size={14} />}
           <span className="k">{label(r)}</span>
-          <span className="t">{r.obligation}</span>
+          <span className="t">{ask(r)?.question || r.obligation}</span>
         </button>
       ))}
       {q.items.length > 4 && (
@@ -343,7 +347,8 @@ export function Feed({ userName }: { userName: string }) {
     `select l.id, l.side, l.kind, l.obligation, l.provenance, l.source, l.opened_at,
             l.urgency, l.urgency_reason, l.thread_ref, l.person_id, l.work_project_id, l.situation_id, l.due_at,
             coalesce(p.name,'') as person, p.avatar_url,
-            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft
+            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft,
+            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending' and d.options is not null and jsonb_typeof(d.options->'choices') = 'array' and d.options->>'chosen' is null) as needs_call
      from loops l left join people p on p.id=l.person_id
      where l.status='open'
      order by coalesce(l.urgency,2) asc, l.opened_at asc nulls last`, version))

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthGuard, useCurrentUser } from 'lemma-sdk/react'
-import { Inbox, Users, Layers, FileText, Zap, Moon, Sun, MessageCircle } from 'lucide-react'
+import { Inbox, Users, Layers, FileText, Zap, Moon, Sun, MessageCircle, BookOpenText } from 'lucide-react'
 import { lemmaClient } from './lemma-client'
 import { useSql, rev, firstName } from './lib'
 import { ToastProvider, Avatar } from './ui'
@@ -15,6 +15,7 @@ import { Workstreams } from './screens/workstreams'
 import { People } from './screens/people'
 import { Docs } from './screens/docs'
 import { Autopilots } from './screens/autopilots'
+import { Wiki } from './screens/wiki'
 import { FirstRun, needsFirstRun } from './screens/firstrun'
 import { ensureMyAutopilots, ensureSkills } from './autopilot-sync'
 import { ensureOttoMail } from './ottomail'
@@ -60,6 +61,7 @@ function Rail({ email, name, catching }: { email: string; name: string; catching
         <Item to="/workstreams" label="Workstreams" icon={Layers} />
         <Item to="/people" label="People" icon={Users} />
         <Item to="/docs" label="Docs" icon={FileText} />
+        <Item to="/wiki" label="Wiki" icon={BookOpenText} />
         <Item to="/autopilots" label="Autopilots" icon={Zap} />
       </div>
       <div className="nav" style={{ marginTop: 14 }}>
@@ -79,7 +81,7 @@ function Rail({ email, name, catching }: { email: string; name: string; catching
           <div className="kbd">⌘K</div>
           <ThemeToggle />
         </div>
-        <button className="you" title="Your mailboxes" onClick={() => setBoxes(true)}>
+        <button className="you" title="You: reach, mailboxes and apps" onClick={() => setBoxes(true)}>
           <Avatar name={name} />
           <span style={{ minWidth: 0 }}>
             <span className="em">{email}</span>
@@ -123,6 +125,7 @@ function Shell({ name, email }: { name: string; email: string }) {
   if (route.startsWith('/workstreams')) screen = <Workstreams />
   else if (route.startsWith('/people')) screen = <People />
   else if (route.startsWith('/docs')) screen = <Docs />
+  else if (route.startsWith('/wiki')) screen = <Wiki />
   else if (route.startsWith('/autopilots')) screen = <Autopilots />
   else screen = <Feed userName={name} />
   // anyone missing their own copy of a default autopilot gets it quietly; anything they

@@ -16,6 +16,7 @@ import { useCatching, useProgress, useFinishedSummary, type Progress } from '../
 import { useTeammate, tm } from '../teammate'
 import { turnOnByKey } from '../autopilot-sync'
 import { useAccounts, accountLabel, resolveAccount } from '../accounts'
+import { asChoices } from '../choices'
 
 /* Today — read once, top to bottom, then get on with the day.
 
@@ -130,13 +131,14 @@ function Masthead({ name }: { name: string }) {
 interface Ready {
   loop_id: string; kind: string; subject?: string | null; body?: string | null
   person: string; avatar_url?: string | null; obligation: string; side: string; docs: number
+  options?: unknown
   [k: string]: unknown
 }
 
 function ReadyShelf() {
   const { version, open } = useNav()
   const q = useSql<Ready>(rev(
-    `select distinct on (l.id) l.id as loop_id, coalesce(d.kind,'email') as kind, d.subject, d.body,
+    `select distinct on (l.id) l.id as loop_id, coalesce(d.kind,'email') as kind, d.subject, d.body, d.options,
             coalesce(p.name,'') as person, p.avatar_url, l.obligation, l.side,
             (select count(*) from deliverables x where x.loop_id=l.id and x.status <> 'discarded') as docs
      from drafts d join loops l on l.id=d.loop_id and l.status='open'
@@ -158,8 +160,11 @@ function ReadyShelf() {
     const today = d.toDateString() === new Date().toDateString()
     return `${today ? 'Today' : d.toLocaleDateString(undefined, { weekday: 'long' })}, ${fmtTime(iso)}`
   }
+  // written as choices and not yet picked: a question for them, not a letter to send
+  const ask = (r: Ready) => { const c = asChoices(r.options); return c && c.chosen === null ? c : null }
   const verb = (r: Ready) => {
     const who = r.person.split(' ')[0] || 'them'
+    if (ask(r)) return `Your call on ${who}`
     if (Number(r.docs) > 0) return `Document for ${who}`
     if (r.kind === 'meeting') return `Times for ${who}`
     return r.side === 'them' ? `Nudge ${who}` : `Reply to ${who}`
@@ -190,13 +195,15 @@ function ReadyShelf() {
               <Avatar name={r.person || '?'} src={r.avatar_url} size="xs" />
               <span className="note-k">{icon(r)} {verb(r)}</span>
             </span>
-            <span className="note-subj">{r.subject || r.obligation}</span>
-            {preview(r)
-              ? <span className="note-body">{preview(r)}</span>
-              : <span className="note-body empty">A blank draft is started. Write it, or let {tm()}.</span>}
+            <span className="note-subj">{ask(r)?.question || r.subject || r.obligation}</span>
+            {ask(r)
+              ? <span className="note-body">Written each way: {ask(r)!.choices.map((x) => x.label).join(' · ')}</span>
+              : preview(r)
+                ? <span className="note-body">{preview(r)}</span>
+                : <span className="note-body empty">A blank draft is started. Write it, or let {tm()}.</span>}
             <span className="note-foot">
-              <span className="note-for">{r.subject ? r.obligation : ''}</span>
-              <span className="note-go">Review <ArrowRight size={12} /></span>
+              <span className="note-for">{r.subject || ask(r) ? r.obligation : ''}</span>
+              <span className="note-go">{ask(r) ? 'Choose' : 'Review'} <ArrowRight size={12} /></span>
             </span>
           </button>
         ))}
@@ -555,6 +562,7 @@ export function Today({ userName }: { userName: string }) {
             coalesce(p.name,'') as person, p.avatar_url, p.email as person_email, p.role, p.relationship,
             p.company_id, coalesce(c.name,'') as company, c.domain as company_domain,
             (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft,
+            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending' and d.options is not null and jsonb_typeof(d.options->'choices') = 'array' and d.options->>'chosen' is null) as needs_call,
             (select i.account_id from interactions i where i.thread_ref=l.thread_ref and i.account_id is not null limit 1) as account_id
      from loops l left join people p on p.id=l.person_id
      left join companies c on c.id=p.company_id

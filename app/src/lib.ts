@@ -80,6 +80,8 @@ export interface LoopRow {
   avatar_url?: string | null
   company?: string | null
   has_draft?: number | null
+  /** a pending draft written as choices, still waiting for the person to pick one */
+  needs_call?: number | null
   [k: string]: unknown
 }
 
@@ -184,13 +186,15 @@ export function owedBy(l: LoopRow): string {
 
 /* ---------------- queries ---------------- */
 
+// needs_call is the same test as AWAITING_SQL in choices.ts, inlined because choices.ts imports this file
 export const LOOP_SELECT = `
   l.id, l.side, l.kind, l.status, l.obligation, l.provenance, l.source,
   l.opened_at, l.due_at, l.urgency, l.urgency_reason, l.thread_ref,
   l.person_id, l.work_project_id,
   coalesce(p.name,'') as person, p.email as person_email, p.avatar_url,
   coalesce(c.name,'') as company,
-  (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft`
+  (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft,
+  (select count(*) from drafts d where d.loop_id=l.id and d.status='pending' and d.options is not null and jsonb_typeof(d.options->'choices') = 'array' and d.options->>'chosen' is null) as needs_call`
 
 export const LOOP_FROM = `
   from loops l

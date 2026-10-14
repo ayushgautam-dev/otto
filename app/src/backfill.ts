@@ -347,6 +347,8 @@ export function useCatchUp(onProgress: () => void): CatchUp | null {
             await setCatchUpSchedule(false).catch(() => null)
             // every draft is only worth sending if it sounds like them; their sent mail is the sample
             await runWorkflow('autopilot_learn_voice', 180_000).catch(() => null)
+            // and their wiki is written once now, rather than waiting for the first night
+            await startWorkflow('autopilot_wiki').catch(() => null)
             onProgress()
             if (live) setState(null)
             return

@@ -1,0 +1,45 @@
+{
+  "description": "Your wiki: every night, reads the day and keeps what it understands about you current: who you are, what matters now, how you work, the people who matter, your preferences. Your own edits always win.",
+  "edges": [
+    {
+      "id": "e0",
+      "label": null,
+      "source": "write",
+      "target": "end"
+    }
+  ],
+  "icon_url": null,
+  "mode": "GLOBAL",
+  "name": "autopilot_wiki",
+  "nodes": [
+    {
+      "config": {
+        "agent_name": "pod_default",
+        "input_mapping": {
+          "message": {
+            "type": "literal",
+            "value": "Keep the person's wiki current. It is `/me/about.md`: what you understand about them, which they read and edit on their desk. Send nothing, ask nothing, and never mention this file to anyone.\n\n1. Read it: `lemma files cat /me/about.md`. If it is missing, this is the first pass: read their last three weeks. Otherwise read what happened since its newest *Recent updates* line, usually a day: `interactions` (their summaries), `loops` opened or closed, `work_projects`, `tracks`, `corrections`, `settings` where `key` is `what_i_do` or `voice_doc`, and what they told you in conversations.\n2. Their edits win, and you can tell them from yours: `settings` where `key` is `wiki_edits` holds `wrote` (lines they wrote or reworded: keep each word for word) and `deleted` (lines they took out: do not bring one back unless something new in the record calls for it). Change one of their lines only when the record plainly shows it no longer holds, and log that under *Recent updates*. Every other line is yours from an earlier pass: revise it freely so the whole file follows the rules below.\n3. The file is: a first line `# <their full name>`, then exactly these sections, in this order, as short plain bullets addressed to them (\"You run partnerships at Acme\"):\n   - `## Who you are`: role, company and what it does, where they are and their timezone.\n   - `## What matters now`: the three to five things taking their time this month, each with its specific (the customer, the hire, the deadline).\n   - `## How you work`: rhythms the record shows, such as when they meet, how quickly they get back to people, how they like to be reached, the tools they use. Never how they write (greeting, sign-off, length, tone): their own rules and their learned voice are shown beside the wiki already.\n   - `## People who matter`: five to eight people, each with who they are to them and what is current (\"Priya Nair, Brightline: renewing the annual plan in November\").\n   - `## Preferences`: what they have told you or corrected about how they want things done (what to raise, what to leave alone, how to handle a kind of request), in their words where you can. Not writing style, for the same reason.\n   - `## Recent updates`: one dated line per change you made (\"14 Oct: added the Northwind pilot to What matters now\"), newest first, at most twelve lines.\n4. Only what the record shows or they said. Never guess a fact to fill a section: a section with nothing yet gets one honest line (\"Not clear from your mail yet\"). Keep what still holds; retire what is stale (a priority that is done, someone not heard from in a month) and log it.\n5. Never copy their business details, their voice notes, amounts of money owed, or anything about another person beyond who that person is to them. No ids, file paths, or table, function or field names.\n6. Every pass, check each of your own lines (not theirs) against 3 to 5 as they stand now, even when nothing new happened, and fix any that breaks them; log what you fixed.\n7. Write the whole file back (`lemma files write /me/about.md --from <a local file>`) only if something changed; otherwise leave it as it is. Report in one line what changed."
+          }
+        }
+      },
+      "id": "write",
+      "label": "Update the wiki",
+      "position": null,
+      "type": "AGENT"
+    },
+    {
+      "config": {},
+      "id": "end",
+      "label": "Done",
+      "position": null,
+      "type": "END"
+    }
+  ],
+  "start": {
+    "config": {
+      "schedule_type": "CRON"
+    },
+    "type": "SCHEDULED"
+  },
+  "visibility": "POD"
+}

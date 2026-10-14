@@ -68,7 +68,7 @@ export function ItemRow({ l, onChange }: { l: LoopRow; onChange: () => void }) {
         {ready && (
           <span className="ready-tag">
             <Send size={11} />
-            {l.side === 'you' ? 'ready' : 'nudge ready'}
+            {Number(l.needs_call) > 0 ? 'your call' : l.side === 'you' ? 'ready' : 'nudge ready'}
           </span>
         )}
         {l.side !== 'you' && l.person && (

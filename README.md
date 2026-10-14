@@ -79,6 +79,15 @@ close itself when you reply. Cold pitches and automated mail never become commit
 **Corrections are the settings page.** Every line Otto writes has a quiet *not right?*.
 Say what is wrong in your own words, and Otto reads it before it writes anything again.
 
+**Your decisions stay yours.** When a reply turns on a yes or no only you can make (a
+sponsorship, a proposal, an invitation) and nothing on record says which way you went,
+Otto writes it each way and asks you first. Pick one, edit it, send it.
+
+**A wiki of you, and three ways in.** Otto keeps a page on what it understands about you:
+who you are, what matters now, how you work, the people who matter. It updates every night
+and you can edit any line. Reach Otto at its own email address, on WhatsApp or on a Telegram
+bot of your own, all set up from the You panel.
+
 ## Private per person, ready for a team
 
 One person installs it; anyone else in the organization can be added to the same pod.

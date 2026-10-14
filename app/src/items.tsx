@@ -95,7 +95,7 @@ export function ItemList({ loops, highlight, onChange, limit }: {
                 {l.obligation}
               </button>
               <span className="o">
-                {Number(l.has_draft) > 0 && <span className="ready">{l.side === 'you' ? 'ready to send' : 'nudge ready'}</span>}
+                {Number(l.has_draft) > 0 && <span className="ready">{Number(l.needs_call) > 0 ? 'your call' : l.side === 'you' ? 'ready to send' : 'nudge ready'}</span>}
                 {l.side === 'you' ? 'you' : (
                   <button className="link" style={{ fontSize: 12.5 }}
                     onClick={() => l.person_id && openSheet({ type: 'person', id: l.person_id })}>

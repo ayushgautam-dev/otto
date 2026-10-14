@@ -127,7 +127,8 @@ export function Workstreams() {
     `select l.id, l.side, l.kind, l.obligation, l.provenance, l.source, l.opened_at,
             l.urgency, l.urgency_reason, l.thread_ref, l.person_id, l.work_project_id,
             coalesce(p.name,'') as person, p.avatar_url,
-            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft
+            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending') as has_draft,
+            (select count(*) from drafts d where d.loop_id=l.id and d.status='pending' and d.options is not null and jsonb_typeof(d.options->'choices') = 'array' and d.options->>'chosen' is null) as needs_call
      from loops l left join people p on p.id=l.person_id
      where l.status='open'
      order by coalesce(l.urgency,2) asc`, version))
