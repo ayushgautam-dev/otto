@@ -151,6 +151,11 @@ function inline(text: string, keyBase: string): ReactNode[] {
   return out
 }
 
+/** One line of inline markdown (bold, italic, code, links), for text that is not a block. */
+export function Inline({ text }: { text: string }) {
+  return <>{inline(text, 'i')}</>
+}
+
 export function Markdown({ text }: { text: string }) {
   const nodes = useMemo(() => {
     const lines = (text || '').replace(/\r/g, '').split('\n')

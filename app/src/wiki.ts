@@ -101,6 +101,58 @@ export function foldEdits(prev: Edits | null, before: string, after: string): Ed
   }
 }
 
+/* ---------------- one line at a time ----------------
+   The file is bullets under fixed headings (the nightly pass writes it that way). The page
+   shows and edits it line by line, so here a section's body becomes a list of lines and
+   back. A wrapped bullet stays one line; stray prose becomes a line of its own. */
+
+export const SEC = {
+  who: 'Who you are', now: 'What matters now', work: 'How you work',
+  people: 'People who matter', prefs: 'Preferences',
+} as const
+
+export const findSec = (w: Wiki, heading: string) =>
+  w.sections.find((s) => s.heading.toLowerCase() === heading.toLowerCase())
+
+const BULLET = /^\s*(?:[-*•]|\d+[.)])\s+/
+
+export function toLines(body: string): string[] {
+  const out: string[] = []
+  let open = false
+  for (const raw of body.replace(/\r/g, '').split('\n')) {
+    if (!raw.trim()) { open = false; continue }
+    if (BULLET.test(raw)) { out.push(raw.replace(BULLET, '').trim()); open = true; continue }
+    if (open && /^\s+/.test(raw)) out[out.length - 1] += ` ${raw.trim()}`
+    else { out.push(raw.trim()); open = false }
+  }
+  return out.filter(Boolean)
+}
+
+export const fromLines = (xs: string[]) => xs.map((x) => x.trim()).filter(Boolean).map((x) => `- ${x}`).join('\n')
+
+/** The same text with its bullet and spacing removed, for telling lines apart. */
+export const plain = (l: string) => l.replace(BULLET, '').replace(/\s+/g, ' ').trim()
+
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+/** "Lead: the rest" / "Lead — the rest" → a short title and its detail, when the lead is short. */
+export function splitLead(line: string): { lead: string | null; rest: string } {
+  const m = /^(.{3,70}?)(?::\s|\s[—–]\s)(.+)$/.exec(line)
+  return m ? { lead: m[1].replace(/[*_`]/g, '').trim(), rest: cap(m[2].trim()) } : { lead: null, rest: line }
+}
+
+/** "Priya Nair, Brightline: renewing…" → name, where they are, and what is current.
+ *  "Omar, Lena and Dev — your team…" is a group: each name, no organisation. */
+export function splitPerson(line: string): { name: string; org: string | null; about: string; names: string[] } {
+  const { lead, rest } = splitLead(line)
+  if (!lead) return { name: '', org: null, about: line, names: [] }
+  if (/\s(?:and|&)\s/.test(lead)) {
+    return { name: lead, org: null, about: rest, names: lead.split(/,\s*|\s+(?:and|&)\s+/).map((n) => n.trim()).filter(Boolean) }
+  }
+  const [name, ...org] = lead.split(/,\s*/)
+  return { name: name.trim(), org: org.join(', ').trim() || null, about: rest, names: [name.trim()] }
+}
+
 export function asEdits(v: string | null | undefined): Edits | null {
   try { const o = JSON.parse(v || ''); return { wrote: o.wrote ?? [], deleted: o.deleted ?? [] } } catch { return null }
 }

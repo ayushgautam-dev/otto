@@ -1143,10 +1143,79 @@ button.book-gh:hover .book-gt { text-decoration: underline; }
 .fr-wa a.btn { text-decoration: none; }
 
 /* ---------------- wiki ---------------- */
-.wiki-cols { display: grid; grid-template-columns: minmax(0, 720px) minmax(220px, 300px); gap: 48px; align-items: start; }
-.wiki-main { display: flex; flex-direction: column; gap: 30px; min-width: 0; }
-.wiki-sec-h { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
-.wiki-sec-h h2 { font-size: 16px; font-weight: 650; letter-spacing: -.01em; margin: 0; }
+.page.wiki { max-width: 940px; }
+.wiki-id { display: flex; gap: 22px; align-items: flex-start; padding: 26px 28px 20px; margin-bottom: 40px; border-radius: var(--r-lg); background: var(--card); box-shadow: var(--shadow-1), inset 0 0 0 1px var(--line); }
+.wiki-id .av-lg { width: 72px; height: 72px; font-size: 24px; margin-top: 4px; }
+.wiki-id-main { flex: 1; min-width: 0; }
+.wiki-eyebrow { font-size: 11.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 4px; }
+.wiki-id h1 { margin-bottom: 12px; }
+.wiki-id-lines .wl { font-size: 14px; color: var(--ink-2); }
+.wiki-id-lines .wl.lede { font-size: 16.5px; line-height: 1.5; color: var(--ink); margin-bottom: 4px; }
+.wiki-meta { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--ink-3); }
+.wiki-meta .link-q { font-size: 12.5px; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line-2); }
+
+.wiki-sec { margin-bottom: 40px; min-width: 0; }
+.wiki-sec-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.wiki-sec-h h2 { font: 400 25px/1.1 var(--serif); letter-spacing: -.01em; margin: 0; }
+.wiki-sec-h > span { font-size: 12.5px; color: var(--ink-3); }
+.wiki-sec-h .link-q { margin-left: auto; }
+
+/* one line: text, a "yours" mark, and edit/remove on hover */
+.wl { position: relative; display: flex; gap: 8px; align-items: flex-start; padding: 5px 8px; margin: 0 -8px; border-radius: 8px; font-size: 14.5px; line-height: 1.55; color: var(--ink-2); }
+.wl:hover { background: var(--wash); }
+.wl-body { flex: 1; min-width: 0; }
+.wl-mine { display: inline-block; margin-left: 7px; padding: 0 6px; border-radius: 99px; font-size: 10.5px; font-weight: 600; line-height: 17px; vertical-align: 1px; color: var(--ember-2); background: var(--ember-soft); }
+.wl-act { display: flex; gap: 2px; opacity: 0; transition: opacity .12s; flex: none; }
+.wl:hover .wl-act, .wl:focus-within .wl-act { opacity: 1; }
+.wl-act button { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px; color: var(--ink-3); }
+.wl-act button:hover { background: var(--wash-2); color: var(--ink); }
+.wl-input { margin: 4px 0; }
+.wl-input textarea { width: 100%; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--ink-4); background: var(--raised); font: inherit; font-size: 14.5px; line-height: 1.5; color: var(--ink); resize: none; overflow: hidden; }
+.wl-input textarea:focus { outline: none; box-shadow: 0 0 0 3px var(--wash-2); }
+.wl-input-foot { display: flex; align-items: center; gap: 12px; justify-content: flex-end; margin-top: 6px; }
+.wl-input-foot > span { margin-right: auto; font-size: 12px; color: var(--ink-4); }
+.wl-add { display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; font-size: 13px; color: var(--ink-3); opacity: .75; }
+.wl-add:hover { color: var(--ink); opacity: 1; }
+
+/* what matters now: cards */
+.wiki-now { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.wl.now-card { margin: 0; padding: 16px 16px 14px 18px; background: var(--card); border-radius: var(--r); box-shadow: var(--shadow-1), inset 0 0 0 1px var(--line); transition: box-shadow .15s; }
+.wl.now-card:hover { background: var(--card); box-shadow: var(--shadow-2), inset 0 0 0 1px var(--line-2); }
+.wl.now-card .wl-act { position: absolute; top: 8px; right: 8px; background: var(--card); border-radius: 8px; }
+.now-h { display: flex; gap: 9px; align-items: center; margin-bottom: 6px; padding-right: 8px; }
+.now-h b { font-size: 15px; font-weight: 620; color: var(--ink); line-height: 1.35; }
+.now-rest { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.now-card:hover .now-rest { -webkit-line-clamp: unset; }
+.now-open { display: inline-flex; align-items: center; gap: 3px; margin-top: 10px; font-size: 12.5px; font-weight: 550; color: var(--ink-3); }
+.now-open:hover { color: var(--ember-2); }
+
+/* people who matter: faces */
+.wiki-people { display: flex; flex-direction: column; }
+.wl.person-row { gap: 14px; padding: 11px 8px; border-bottom: 1px solid var(--line); border-radius: 0; }
+.wl.person-row:last-child { border-bottom: 0; }
+.wl.person-row:hover { border-radius: 8px; }
+.wl.person-row .wl-body { display: flex; gap: 14px; align-items: flex-start; }
+.pr-face { flex: none; width: 38px; display: flex; justify-content: center; padding-top: 2px; }
+.pr-face .faces .av { width: 24px; height: 24px; }
+.pr-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pr-name { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pr-name > button, .pr-name > b { font-size: 14.5px; font-weight: 620; color: var(--ink); }
+.pr-name > button:hover, .pr-org button:hover { text-decoration: underline; text-underline-offset: 3px; }
+.pr-org { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-3); }
+.pr-org .logo { width: 18px; height: 18px; border-radius: 5px; font-size: 9.5px; }
+.pr-about { font-size: 13.5px; color: var(--ink-2); line-height: 1.5; }
+
+/* how you work + preferences */
+.wiki-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 40px; }
+.wiki-list { display: flex; flex-direction: column; gap: 2px; }
+.wl.dot .wl-body { padding-left: 14px; position: relative; }
+.wl.dot .wl-body::before { content: ''; position: absolute; left: 1px; top: .72em; width: 5px; height: 5px; border-radius: 50%; background: var(--ink-4); }
+.wl.rule .wl-body { display: flex; gap: 9px; align-items: flex-start; }
+.rule-ic { flex: none; margin-top: 4px; color: var(--moss); }
+
+/* notes: your writing rules, business details */
+.wiki-note { margin-bottom: 24px; padding: 20px 22px; border-radius: var(--r-lg); background: var(--paper-2); }
+.wiki-note .wiki-sec-h h2 { font-size: 21px; }
 .wiki-body { font-size: 14.5px; line-height: 1.6; color: var(--ink-2); }
 .wiki-body ul { margin: 0; padding-left: 18px; }
 .wiki-body li + li { margin-top: 4px; }
@@ -1155,10 +1224,22 @@ button.book-gh:hover .book-gt { text-decoration: underline; }
 .wiki-edit textarea { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--raised); font: inherit; font-size: 14px; line-height: 1.55; color: var(--ink); resize: vertical; }
 .wiki-edit textarea:focus { outline: none; border-color: var(--ink-4); }
 .wiki-edit-foot { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 8px; }
-.wiki-learned { margin-top: -18px; padding: 10px 14px; border-radius: 10px; background: var(--paper-2); }
+.wiki-learned { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-2); }
 .wiki-learned summary { cursor: pointer; font-size: 13px; font-weight: 550; color: var(--ink-2); }
 .wiki-learned[open] summary { margin-bottom: 8px; }
 .wiki-learned .wiki-none { margin-top: 8px; font-size: 12.5px; }
-.wiki-log { position: sticky; top: 24px; }
-.wiki-log .wiki-body { font-size: 13px; color: var(--ink-3); }
-@media (max-width: 960px) { .wiki-cols { grid-template-columns: minmax(0, 1fr); gap: 28px; } .wiki-log { position: static; } }
+
+/* what changed: folded away at the foot */
+.wiki-log { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 14px; scroll-margin-top: 24px; }
+.wiki-log summary { cursor: pointer; font-size: 13px; font-weight: 550; color: var(--ink-3); }
+.wiki-log summary span { margin-left: 4px; font-variant-numeric: tabular-nums; color: var(--ink-4); }
+.wiki-log ul { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.wiki-log li { display: grid; grid-template-columns: 56px 1fr; gap: 10px; font-size: 13px; line-height: 1.5; color: var(--ink-2); }
+.wiki-log time { color: var(--ink-4); font-variant-numeric: tabular-nums; }
+
+@media (max-width: 860px) {
+  .wiki-now, .wiki-pair { grid-template-columns: minmax(0, 1fr); }
+  .wiki-pair { gap: 0; }
+  .wiki-id { flex-direction: column; gap: 12px; padding: 20px; }
+  .wl-act { opacity: 1; }
+}
