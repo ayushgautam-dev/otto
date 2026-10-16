@@ -1,5 +1,5 @@
 {
-  "description": "Otto, the simpler layout.",
+  "description": "An AI chief of staff. I read your mail, find what is open, and prepare the work. You check it and send. Free to start.",
   "name": "yourotto",
   "public_slug": "${yourotto_slug}",
   "visibility": "PUBLIC"
