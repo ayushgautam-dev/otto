@@ -5,7 +5,7 @@ import {
   client, useSql, rev, lit, ageLabel, fmtDate, fmtTime, runFn, records,
   type PersonRow, type LoopRow, type TimelineRow,
 } from './lib'
-import { Avatar, Markdown, Empty, Loading, useToast } from './ui'
+import { Avatar, Markdown, Brief, Empty, Loading, useToast } from './ui'
 import { useNav, tabKey, type SheetTarget } from './nav'
 import { ItemList } from './items'
 import { LemPane, useAskLem, useLemPanel } from './asklem'
@@ -445,7 +445,7 @@ function PersonPane({ tab }: { tab: Extract<SheetTarget, { type: 'person' }> }) 
                 <span className="nm">{d.title}</span><span className="rt">{fmtDate(d.created_at)}</span>
               </button>)))}
         {view === 'about' && (p?.research || p?.context
-          ? <Markdown text={p.research || p.context || ''} />
+          ? (p.research ? <Brief text={p.research} /> : <Markdown text={p.context || ''} />)
           : <Empty line={`${tm()} has not written them up yet.`} />)}
       </div>
     </div>
@@ -661,7 +661,7 @@ function MeetingPane({ tab }: { tab: Extract<SheetTarget, { type: 'meeting' }> }
       {briefed.map((g) => (
         <div key={g.id} className="raise" style={{ marginTop: 12 }}>
           <div className="cap" style={{ marginBottom: 7 }}>Before you meet {firstOf(g.name)}</div>
-          <Markdown text={String(g.research)} />
+          <Brief text={String(g.research)} />
         </div>
       ))}
       {ahead && unbriefed.length > 0 && briefed.length === 0 && (

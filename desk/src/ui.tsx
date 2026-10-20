@@ -237,3 +237,34 @@ export function Markdown({ text }: { text: string }) {
 
   return <div className="md">{nodes}</div>
 }
+
+/* A person's brief is written one labelled line per section ("**Who** — …"), with no
+   blank line between them, so plain markdown runs it into one paragraph. Each label
+   becomes a small heading with its paragraph under it. Anything not in that shape
+   (an older write-up, a paid lookup's longer profile) renders as ordinary markdown. */
+const BRIEF_LABEL = /^\*\*([^*]{1,40})\*\*\s*[—–:-]\s*(.*)$/
+
+export function Brief({ text }: { text: string }) {
+  const sections = useMemo(() => {
+    const out: { label: string; lines: string[] }[] = []
+    for (const raw of (text || '').replace(/\r/g, '').split('\n')) {
+      const m = BRIEF_LABEL.exec(raw.trim())
+      if (m) out.push({ label: m[1].trim(), lines: [m[2]] })
+      else if (out.length) out[out.length - 1].lines.push(raw)
+      else if (raw.trim()) out.push({ label: '', lines: [raw] })
+    }
+    return out
+  }, [text])
+
+  if (sections.filter((s) => s.label).length < 2) return <Markdown text={text} />
+  return (
+    <div className="brief">
+      {sections.map((s, i) => (
+        <section key={i} className="brief-sec">
+          {s.label && <div className="brief-label">{s.label}</div>}
+          <Markdown text={s.lines.join('\n')} />
+        </section>
+      ))}
+    </div>
+  )
+}

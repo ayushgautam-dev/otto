@@ -643,6 +643,10 @@ body.focus-wide .focus { --focus-w: min(64vw, 1040px); }
 .md code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--paper-2); padding: 1px 5px; border-radius: 5px; }
 .md a { color: var(--ember-2); text-decoration: underline; text-underline-offset: 3px; }
 .md hr { border: 0; border-top: 1px solid var(--line); margin: 1.4em 0; }
+/* a person's brief: one small heading and one paragraph per section */
+.brief-sec + .brief-sec { margin-top: 12px; }
+.brief-label { font: 600 12.5px/1.4 var(--sans); color: var(--ink); margin-bottom: 2px; }
+.agenda .eyebrow + .brief { margin-top: 8px; }
 .md table { border-collapse: collapse; width: 100%; font-size: 13px; margin: .6em 0 1em; font-family: var(--sans); }
 .md th, .md td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
 .md th { font-weight: 600; color: var(--ink); background: var(--paper-2); }

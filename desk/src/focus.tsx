@@ -5,7 +5,7 @@ import {
   client, useSql, rev, lit, ageLabel, fmtDate, fmtTime, cleanTitle, records, isGmailThread,
   type PersonRow, type LoopRow, type TimelineRow,
 } from './lib'
-import { Avatar, Logo, Markdown, Empty, Loading, Orb } from './ui'
+import { Avatar, Logo, Markdown, Brief, Empty, Loading, Orb } from './ui'
 import { Board, boardSql, type BoardRow } from './screens/board'
 import { useNav, focusKey, InFocus, type Focus } from './nav'
 import { ItemList, Glyph } from './items'
@@ -372,7 +372,7 @@ function PersonFocus({ f }: { f: Extract<Focus, { type: 'person' }> }) {
                 <span className="docrow-t">{d.title}</span><span className="muted">{fmtDate(d.created_at)}</span>
               </button>))}</div>)}
         {view === 'about' && (p?.research || p?.context
-          ? <div className="prose"><Markdown text={p.research || p.context || ''} /></div>
+          ? <div className="prose">{p.research ? <Brief text={p.research} /> : <Markdown text={p.context || ''} />}</div>
           : <Empty line={`${tm()} hasn’t written them up yet.`} />)}
       </div>
     </div>
@@ -597,7 +597,7 @@ function MeetingFocus({ f }: { f: Extract<Focus, { type: 'meeting' }> }) {
       {briefed.map((g) => (
         <div key={g.id} className="agenda">
           <div className="eyebrow">Before you meet {firstOf(g.name)}</div>
-          <Markdown text={String(g.research)} />
+          <Brief text={String(g.research)} />
         </div>
       ))}
       {ahead && unbriefed.length > 0 && briefed.length === 0 && (
