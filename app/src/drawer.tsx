@@ -1,8 +1,8 @@
 import { useEffect, useState, useRef } from 'react'
-import { X, ExternalLink, MessageCircle, Maximize2, Minimize2, Paperclip, ChevronRight } from 'lucide-react'
+import { X, ExternalLink, MessageCircle, Maximize2, Minimize2, Paperclip, ChevronRight, EyeOff } from 'lucide-react'
 import { useCurrentUser } from 'lemma-sdk/react'
 import {
-  client, useSql, rev, lit, ageLabel, fmtDate, fmtTime, runFn, records,
+  client, sql, useSql, rev, lit, ageLabel, fmtDate, fmtTime, runFn, records,
   type PersonRow, type LoopRow, type TimelineRow,
 } from './lib'
 import { Avatar, Markdown, Brief, Empty, Loading, useToast } from './ui'
@@ -17,6 +17,7 @@ import {
 import { tm } from './teammate'
 import { useThreadAccount } from './accounts'
 import { isGmailThread } from './lib'
+import { asChoices } from './choices'
 /* The right-hand workspace: a pane of tabs beside the page, never over it. */
 
 /* ---------------- tab labels ---------------- */
@@ -167,8 +168,9 @@ function LoopPane({ tab }: { tab: Extract<SheetTarget, { type: 'loop' }> }) {
   const first = (l?.person || 'them').split(' ')[0]
   const isMail = isGmailThread(l?.thread_ref)
   const [making, setMaking] = useState(false)
-  // null: the Redo button; a string: what they want changed, being typed
-  const [redo, setRedo] = useState<string | null>(null)
+  // null: closed; otherwise what they want, being typed, before asking for a draft or a redo
+  const [say, setSay] = useState<{ redo: boolean; text: string } | null>(null)
+  const key = `loop:${tab.id}`
 
   async function startNudge() {
     if (!l || draft || making) return
@@ -184,38 +186,67 @@ function LoopPane({ tab }: { tab: Extract<SheetTarget, { type: 'loop' }> }) {
     } finally { setMaking(false) }
   }
   /* Asking for a draft does not bring the chat forward. This pane says it is being
-     written and the draft appears here when ready; it re-reads every few seconds and
-     stops once what is there has changed (or after a few minutes). */
+     written for as long as the run lasts, and re-reads every few seconds so the draft
+     shows the moment it is there. */
   const panel = useLemPanel()
-  const sig = `${draft?.id ?? ''}:${(draft?.body ?? '').length}:${JSON.stringify(draft?.options ?? '').length}:${docs.items.length}`
-  const [writing, setWriting] = useState<{ from: string; since: number } | null>(null)
+  const writing = panel.isWriting(key)
   useEffect(() => {
     if (!writing) return
-    if (sig !== writing.from || Date.now() - writing.since > 4 * 60_000) { setWriting(null); return }
-    const t = setTimeout(bump, 4000)
-    return () => clearTimeout(t)
-  }, [writing, sig, version])
+    const t = window.setInterval(bump, 4000)
+    return () => window.clearInterval(t)
+  }, [writing])
   const autoNudged = useRef(false)
   useEffect(() => {
     if (!tab.nudge || !l || dq.isLoading || autoNudged.current) return
     autoNudged.current = true
     // a nudge opened from the Feed is written straight away, in place
-    void (async () => { if (!draft) await startNudge(); quietWrite() })()
+    void (async () => { if (!draft) await startNudge(); lemWrite() })()
   }, [tab.nudge, l?.id, dq.isLoading])
 
   if (q.isLoading && !l) return <div className="pane-body"><Loading /></div>
   if (!l) return <div className="pane-body"><Empty line="This item is gone." /></div>
 
-  const quietWrite = (direction?: string) => { if (!l) return; setWriting({ from: sig, since: Date.now() }); lemWrite(direction) }
   const lemWrite = (direction?: string) => {
-    const say = direction?.trim() ? ` My direction: "${direction.trim()}".` : ''
-    return panel.write(
+    if (!l) return
+    const said = direction?.trim() ? ` My direction: "${direction.trim()}".` : ''
+    panel.write(
     l.side === 'them'
-      ? `Write a short nudge to ${l.person} about "${l.obligation}" (commitment ${l.id}) in my voice, as a reply on the same conversation. Put it in the pending draft for that commitment if there is one.${say} End with the card marker.`
-      : `Prepare "${l.obligation}" for me (commitment ${l.id}). Use the otto-write skill and pick the right shape.${say} End with the card marker.`,
-    { key: `loop:${l.id}`, title: l.obligation, about: `the commitment "${l.obligation}" (loop_id ${l.id})` })
+      ? `Write a short nudge to ${l.person} about "${l.obligation}" (commitment ${l.id}) in my voice, as a reply on the same conversation. Put it in the pending draft for that commitment if there is one.${said} End with the card marker.`
+      : `Prepare "${l.obligation}" for me (commitment ${l.id}). Use the otto-write skill and pick the right shape.${said} End with the card marker.`,
+    { key, title: l.obligation, about: `the commitment "${l.obligation}" (loop_id ${l.id})` })
   }
-  const redoNow = () => { const t = redo ?? ''; setRedo(null); quietWrite(t) }
+  const go = async () => {
+    const t = say?.text ?? ''
+    setSay(null)
+    if (l.side === 'them' && !draft) await startNudge()
+    lemWrite(t)
+  }
+
+  // a nudge that was started and not written yet holds only its greeting
+  const blank = !!draft && (draft.kind ?? 'email') === 'email' && !asChoices(draft.options)
+    && String(draft.body ?? '').replace(/^\s*(hi|hello|hey|dear)\b[^\n]*\n?/i, '').trim() === ''
+  const hasWork = (!!draft && !(writing && blank)) || docs.items.length > 0
+  const written = (!!draft && !blank) || docs.items.length > 0
+
+  const direct = say && (
+    <div className="direct">
+      <div className="direct-q">{say.redo ? 'What should change?' : `Anything ${tm()} should know?`}</div>
+      <textarea autoFocus rows={3} value={say.text}
+        placeholder={say.redo ? 'e.g. warmer, shorter, and mention the invoice is attached' : 'e.g. keep it to two lines and offer a call this week'}
+        onChange={(e) => setSay({ ...say, text: e.target.value })}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void go() }
+          if (e.key === 'Escape') { e.stopPropagation(); setSay(null) }
+        }} />
+      <div className="direct-foot">
+        <span className="direct-hint">Optional. Left empty, {tm()} uses its judgement.</span>
+        <span style={{ flex: 1 }} />
+        <button className="btn quiet" onClick={() => setSay(null)}>Cancel</button>
+        <button className="btn primary" disabled={making} onClick={() => void go()}>{say.redo ? 'Redo' : 'Write it'}</button>
+      </div>
+    </div>
+  )
+  const ask = () => panel.open({ key, title: l.obligation, about: `the commitment "${l.obligation}" (loop_id ${l.id})` })
 
   return (
     <div className="pane-body">
@@ -230,13 +261,15 @@ function LoopPane({ tab }: { tab: Extract<SheetTarget, { type: 'loop' }> }) {
       </div>
 
       <CloseControls loop={l} onClosed={() => { bump(); closeTab(tabKey(tab)) }}>
-        {l.side === 'them' && !draft && (
-          <button className="btn primary" disabled={making || !!writing} onClick={() => void (async () => { await startNudge(); quietWrite() })()}>Nudge {first}</button>
+        {!hasWork && !writing && !say && l.side === 'them' && (
+          <button className="btn primary" disabled={making} onClick={() => setSay({ redo: false, text: '' })}>Nudge {first}</button>
         )}
-        {l.side === 'you' && !draft && !docs.items.length && (
-          <button className="btn primary" disabled={!!writing} onClick={() => quietWrite()}>Prepare it</button>
+        {!hasWork && !writing && !say && l.side === 'you' && (
+          <button className="btn primary" onClick={() => setSay({ redo: false, text: '' })}>Prepare it</button>
         )}
+        <button className="btn quiet" onClick={ask}><MessageCircle size={13} /> Ask</button>
       </CloseControls>
+      {!hasWork && direct}
 
       {/* like an email client: the conversation first, your reply underneath it */}
       <div style={{ marginTop: 16 }} />
@@ -249,27 +282,18 @@ function LoopPane({ tab }: { tab: Extract<SheetTarget, { type: 'loop' }> }) {
       {writing && (
         <div className="writing" role="status">
           <span className="spinner sm" />
-          <div><b>{tm()} is writing it…</b><span>It will appear here. You can carry on.</span></div>
+          <div><b>{tm()} is {written ? 'rewriting' : 'writing'} it…</b><span>It will appear here. You can carry on.</span></div>
         </div>
       )}
-      {(draft || docs.items.length > 0) && (
+      {hasWork && (
         <div className="prepared" style={{ marginTop: 16 }}>
           {draft && <LemNote text={draft.note} />}
-          {draft && <DraftCard draft={draft} docs={docs.items} onSent={() => closeTab(tabKey(tab))} onDirect={(t) => quietWrite(t)} />}
-          {draft && (
+          {draft && <DraftCard draft={draft} docs={docs.items} onSent={() => closeTab(tabKey(tab))} onDirect={(t) => lemWrite(t)} />}
+          {say ? direct : (
             <div className="acts" style={{ marginTop: -2, marginBottom: 12 }}>
-              {redo === null ? (
-                <button className="btn quiet" disabled={!!writing} onClick={() => (l.side === 'them' ? quietWrite() : setRedo(''))}>
-                  <MessageCircle size={13} /> {l.side === 'them' ? `Let ${tm()} write it` : `Redo with ${tm()}`}
-                </button>
-              ) : (
-                <span className="redo-say">
-                  <input autoFocus value={redo} placeholder="What should change? Leave empty to redo it"
-                    onChange={(e) => setRedo(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') redoNow(); if (e.key === 'Escape') setRedo(null) }} />
-                  <button className="btn" onClick={redoNow}>Redo</button>
-                </span>
-              )}
+              <button className="btn quiet" disabled={writing} onClick={() => setSay({ redo: written, text: '' })}>
+                <MessageCircle size={13} /> {written ? 'Redo' : `Let ${tm()} write it`}
+              </button>
             </div>
           )}
           {docs.items.map((d) => <DocCard key={d.id} doc={d} />)}
@@ -586,7 +610,7 @@ function WorkstreamPane({ tab }: { tab: Extract<SheetTarget, { type: 'workstream
    or a way to have one written. A recurring meeting: what to raise. Anybody: what is open
    between you. And once it has happened, what the notes say. */
 
-interface MeetRow { id: string; subject: string; occurred_at: string; participants?: unknown; thread_ref?: string | null; external_id?: string | null; [k: string]: unknown }
+interface MeetRow { id: string; subject: string; occurred_at: string; participants?: unknown; thread_ref?: string | null; external_id?: string | null; triage?: string | null; [k: string]: unknown }
 interface GuestRow { id: string; name: string; email: string; role?: string | null; avatar_url?: string | null; research?: string | null; company?: string | null; met: number; [k: string]: unknown }
 
 function attendeesOf(v: unknown): { email: string; name: string }[] {
@@ -599,19 +623,35 @@ function attendeesOf(v: unknown): { email: string; name: string }[] {
 
 const meetingTitle = (t?: string | null) => (t ?? '').replace(/^\s*\[[^\]]*\]\s*/, '').trim()
 
+/* Somebody else can put anything on your calendar. A meeting that is not yours to care about
+   is taken off the desk, not off the calendar: its row is marked noise, the same mark mail
+   that is not worth reading gets, so nothing reads it, briefs it or shows it, and the next
+   calendar sync leaves the mark alone. A series goes whole, and its later occurrences arrive
+   already marked (record_interaction). */
+async function setMeetingNoise(m: MeetRow, series: boolean, noise: boolean): Promise<string[]> {
+  const ids = series && m.thread_ref
+    ? (await sql<{ id: string }>(`select id from interactions where source='calendar' and thread_ref=${lit(m.thread_ref)}`)).map((r) => r.id)
+    : [m.id]
+  await Promise.all(ids.map((id) => records.update('interactions', id, { triage: noise ? 'noise' : null })))
+  return ids
+}
+
 function MeetingPane({ tab }: { tab: Extract<SheetTarget, { type: 'meeting' }> }) {
-  const { openSheet, version, bump } = useNav()
+  const { openSheet, version, bump, closeTab } = useNav()
   const askLem = useAskLem()
+  const panel = useLemPanel()
+  const toast = useToast()
+  const [removing, setRemoving] = useState(false)
   const { user } = useCurrentUser({ client })
   const myDomain = (((user as { email?: string } | undefined)?.email ?? '').split('@')[1] ?? '').toLowerCase()
   const mq = useSql<MeetRow>(rev(
-    `select id, subject, occurred_at, participants, thread_ref, external_id from interactions where id=${lit(tab.id)} limit 1`, version))
+    `select id, subject, occurred_at, participants, thread_ref, external_id, triage from interactions where id=${lit(tab.id)} limit 1`, version))
   const m = mq.items[0]
   const invited = attendeesOf(m?.participants)
   const inList = invited.length ? invited.map((p) => lit(p.email)).join(',') : null
   const guests = useSql<GuestRow>(rev(inList
     ? `select p.id, p.name, p.email, p.role, p.avatar_url, p.research, coalesce(c.name,'') as company,
-              (select count(*) from interactions e where e.source='calendar' and e.occurred_at < now()
+              (select count(*) from interactions e where e.source='calendar' and e.occurred_at < now() and coalesce(e.triage,'') <> 'noise'
                  and e.id <> ${lit(tab.id)} and e.participants::text ilike '%' || p.email || '%') as met
        from people p left join companies c on c.id=p.company_id where lower(p.email) in (${inList})`
     : null, version))
@@ -648,15 +688,51 @@ function MeetingPane({ tab }: { tab: Extract<SheetTarget, { type: 'meeting' }> }
   })
   const firstOf = (n: string) => n.split(' ')[0] || n
   const raise = String(series?.raise_next ?? '').trim()
+  const removed = m.triage === 'noise'
+
+  async function remove(whole: boolean) {
+    setRemoving(false)
+    const ids = await setMeetingNoise(m!, whole, true)
+    toast(whole ? 'Series removed from your desk' : 'Removed from your desk', async () => {
+      await Promise.all(ids.map((id) => records.update('interactions', id, { triage: null })))
+      bump()
+    })
+    bump(); closeTab(tabKey(tab))
+  }
 
   return (
     <div className="pane-body">
-      <div className="pp-head">
+      <div className="pp-head meet-head">
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="nm">{title}</div>
+          <div className="nm clamp" title={title}>{title}</div>
           <div className="rl">{day}, {fmtTime(m.occurred_at)}{recurring ? ' · Recurring' : ''}</div>
         </div>
+        <button className="btn quiet" onClick={() => panel.open({
+          key: `meeting:${m.id}`, title, about: `their meeting "${title}" on ${day} (calendar row ${m.id} in interactions)`,
+        })}><MessageCircle size={13} /> Ask {tm()}</button>
+        {!removed && (
+          <button className="btn quiet" title="Not your meeting? Remove it from your desk. It stays on your calendar."
+            aria-label="Remove from your desk" onClick={() => setRemoving((v) => !v)}><EyeOff size={14} /></button>
+        )}
       </div>
+      {removing && (
+        <div className="confirm-strip" role="alertdialog" aria-label="Remove this meeting">
+          <div><b>Take it off your desk?</b><span>It stays on your calendar. {tm()} stops showing it and preparing for it.</span></div>
+          <div className="confirm-acts">
+            <button className="btn quiet" onClick={() => setRemoving(false)}>Cancel</button>
+            {recurring && <button className="btn" onClick={() => void remove(true)}>Every one in the series</button>}
+            <button className="btn primary" onClick={() => void remove(false)}>{recurring ? 'Just this one' : 'Remove'}</button>
+          </div>
+        </div>
+      )}
+      {removed && (
+        <div className="confirm-strip">
+          <div><b>Off your desk.</b><span>It is still on your calendar; {tm()} leaves it alone.</span></div>
+          <div className="confirm-acts">
+            <button className="btn" onClick={() => void setMeetingNoise(m, false, false).then(bump)}>Put it back</button>
+          </div>
+        </div>
+      )}
 
       {briefed.map((g) => (
         <div key={g.id} className="raise" style={{ marginTop: 12 }}>

@@ -48,6 +48,20 @@ function stepLabel(m: Msg): string | null {
   return 'Working on it'
 }
 
+/* What an item's buttons send is written for the teammate, not to be read back. In the
+   conversation it shows as the one line the person actually asked for. */
+function asSaid(t: string): string {
+  const said = t.match(/ My direction: "([\s\S]*)"\. End with the card marker\.$/)?.[1]
+  const tail = said ? `: “${said}”` : ''
+  let m = t.match(/^Write a short nudge to (.+?) about "[\s\S]*End with the card marker\.$/)
+  if (m) return `Write the nudge to ${m[1].split(' ')[0]}${tail}`
+  m = t.match(/^Prepare "(.+?)" for me \(commitment [\s\S]*End with the card marker\.$/)
+  if (m) return `Prepare “${m[1]}”${tail}`
+  m = t.match(/^Write the short brief for my meeting "(.+?)" on [\s\S]*Run first_meetings/)
+  if (m) return `Write the brief for “${m[1]}”`
+  return t
+}
+
 interface Turn { user?: string; steps: string[]; replies: string[] }
 
 function toTurns(msgs: Msg[]): Turn[] {
@@ -57,7 +71,7 @@ function toTurns(msgs: Msg[]): Turn[] {
     const t = textOf(m)
     if (m.role === 'user' && t) {
       // the panel's own scaffolding is not something the person said
-      cur = { user: t.replace(/\n\n\(This is task [\s\S]*$/, ''), steps: [], replies: [] }
+      cur = { user: asSaid(t.replace(/\n\n\(This is task [\s\S]*$/, '')), steps: [], replies: [] }
       out.push(cur)
       continue
     }
@@ -135,6 +149,60 @@ export interface ChatScope {
   title: string
 }
 
+const instructionsFor = (about: string) =>
+  `You are ${tm()}, talking to the person inside their desk app, which shows cards.\nCONTEXT: ${about}\n`
+  + `Answer in one or two sentences unless they ask for more; at most four short bullets. `
+  + `Never mention workflows, schedules, functions, tables or ids. `
+  + `When you prepare an email, meeting or document, end with its [[draft:id]] or [[doc:id]] marker — never paste it.`
+
+/** A piece of work asked for from an item: sent from out of sight, in that item's own
+ *  conversation, so the chat tab stays on whatever the person had open. */
+export interface Writing { n: number; text: string; scope: ChatScope }
+
+/** Sends one `write` and lets go when its run ends. The item that asked shows it being
+ *  written and re-reads the draft when it is done. */
+export function Writer({ w, onDone }: { w: Writing; onDone: (n: number) => void }) {
+  const nav = useNav()
+  // undefined: still looking for the conversation this scope already has
+  const [convId, setConvId] = useState<string | null | undefined>(undefined)
+  useEffect(() => {
+    let live = true
+    void rememberedConversation(w.scope.key).then((id) => { if (live) setConvId(id) })
+    return () => { live = false }
+  }, [w.scope.key])
+  const instructions = useMemo(() => instructionsFor(w.scope.about), [w.scope.about])
+  const thread = useConversationMessages({ client, agentName: 'pod_default', conversationId: convId ?? null, instructions, autoResume: false })
+  const running = thread.isStreaming || thread.isRunning
+  const began = useRef(false)
+  const sawRun = useRef(false)
+  const finish = useRef(false)
+  const done = () => { if (finish.current) return; finish.current = true; nav.bump(); onDone(w.n) }
+
+  useEffect(() => {
+    if (convId === undefined || began.current) return
+    began.current = true
+    void (async () => {
+      try {
+        let id = convId
+        if (!id) {
+          const c = await client.conversations.createForAgent('pod_default') as { id: string }
+          id = c.id
+          setConvId(id)
+        }
+        void remember(w.scope.key, id, w.scope.title)
+        await thread.sendMessage(w.text, { conversationId: id })
+      } catch (err) { console.error(`${tm()} could not take that`, err); done() }
+    })()
+  }, [convId])
+  useEffect(() => {
+    if (running) { sawRun.current = true; return }
+    if (sawRun.current) done()
+  }, [running])
+  // never left spinning: a run that cannot be seen ending is let go after a few minutes
+  useEffect(() => { const t = window.setTimeout(done, 6 * 60_000); return () => window.clearTimeout(t) }, [])
+  return null
+}
+
 const STARTERS = [
   'What needs me today?',
   'Prepare everything I owe people this week',
@@ -161,13 +229,7 @@ export function Chat({ scope, placeholder, seed, starters = STARTERS, onSeedSent
 
   useEffect(() => { if (!booting) inputRef.current?.focus() }, [booting, scope.key])
 
-  const instructions = useMemo(
-    () => `You are ${tm()}, talking to the person inside their desk app, which shows cards.\nCONTEXT: ${scope.about}\n`
-        + `Answer in one or two sentences unless they ask for more; at most four short bullets. `
-        + `Never mention workflows, schedules, functions, tables or ids. `
-        + `When you prepare an email, meeting or document, end with its [[draft:id]] or [[doc:id]] marker — never paste it.`,
-    [scope.about],
-  )
+  const instructions = useMemo(() => instructionsFor(scope.about), [scope.about])
 
   const thread = useConversationMessages({
     client, agentName: 'pod_default', conversationId: convId,

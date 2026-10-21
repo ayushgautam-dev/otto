@@ -34,13 +34,16 @@ const firstMeetingBrief = (meeting: string) =>
    and not exists (select 1 from interactions e where e.source='calendar' and e.id <> ${meeting}.id
                    and e.occurred_at < ${meeting}.occurred_at and e.participants::text ilike '%' || p.email || '%')`
 
+/** A title as long as a paragraph (invites from strangers often are) cut at a word, with the rest on hover. */
+const shorten = (t: string, n = 64) => (t.length > n ? `${t.slice(0, n).replace(/\s+\S*$/, '')}…` : t)
+
 function Greeting({ name }: { name: string }) {
   const { version, openSheet } = useNav()
   // a first meeting in the next two days with a brief written
   const brief = useSql<{ id: string; title: string; starts_at: string; person: string }>(rev(
     `select i.id, i.subject as title, i.occurred_at as starts_at, p.name as person
      from interactions i join people p on ${firstMeetingBrief('i')}
-     where i.source='calendar' and i.kind='meeting'
+     where i.source='calendar' and i.kind='meeting' and coalesce(i.triage,'') <> 'noise'
        and i.occurred_at > now() and i.occurred_at < now() + interval '2 days'
      order by i.occurred_at asc limit 1`, version)).items[0]
   // Only the real calendar, and only what is still to come today. A meeting derived
@@ -48,7 +51,7 @@ function Greeting({ name }: { name: string }) {
   const next = useSql<{ id: string; title: string; starts_at: string }>(rev(
     `select id, subject as title, occurred_at as starts_at
      from interactions
-     where source='calendar' and kind='meeting'
+     where source='calendar' and kind='meeting' and coalesce(triage,'') <> 'noise'
        and occurred_at >= now()
        and occurred_at < ${lit(endOfToday())}
      order by occurred_at asc limit 1`, version))
@@ -65,7 +68,7 @@ function Greeting({ name }: { name: string }) {
         {greeting()}, {name}.{' '}
         {m
           ? <>Next up, <button className="hello-meet" title="Who is coming, and what is open with them"
-              onClick={() => openSheet({ type: 'meeting', id: m.id })}><b>{label}</b></button> at {fmtTime(m.starts_at)}.</>
+              onClick={() => openSheet({ type: 'meeting', id: m.id })}><b title={label}>{shorten(label)}</b></button> at {fmtTime(m.starts_at)}.</>
           : <>Nothing else on your calendar today.</>}
         {brief && (
           <button className="hello-brief" onClick={() => openSheet({ type: 'meeting', id: brief.id })}>

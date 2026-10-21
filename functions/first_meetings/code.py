@@ -99,7 +99,9 @@ async def first_meetings(ctx: FunctionContext, data: FirstInput) -> FirstResult:
         upcoming = rows(
             "select id, external_id, thread_ref, occurred_at, subject, participants from interactions "
             f"where source = 'calendar' and occurred_at > '{now.isoformat()}' "
-            f"and occurred_at < '{until.isoformat()}' order by occurred_at asc limit 60")
+            f"and occurred_at < '{until.isoformat()}' "
+            # taken off the desk by the person: not theirs to prepare for
+            "and coalesce(triage, '') <> 'noise' order by occurred_at asc limit 60")
     if not upcoming:
         return res
 

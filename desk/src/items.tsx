@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, Clock, X, Send } from 'lucide-react'
 import { ageLabel, type LoopRow } from './lib'
-import { useQuickClose } from './closing'
+import { useClose, HowAsk } from './closing'
 import { useNav, useOpener } from './nav'
 
 /* A commitment, as one sentence.
 
    The glyph says whose move it is — a filled ember dot is yours, a hollow ring is
    someone else's — so one list can hold both without splitting in two. Clicking the
-   sentence opens it in Focus; clicking the name opens the person. Hovering offers the
-   one-move closes, and J/K/E/S do the same from the keyboard. */
+   sentence opens it in Focus; clicking the name opens the person. Hovering offers Done,
+   Snooze and Dismiss, and J/K/E/S do the same from the keyboard. Done and Dismiss ask the
+   same short "how?" as the item's pane, right on the row: what happened off email is what
+   the teammate cannot see for itself. */
 
 function Due({ l }: { l: LoopRow }) {
   if (l.due_at) {
@@ -32,16 +34,22 @@ export function Glyph({ side }: { side: string }) {
 export function ItemRow({ l, onChange }: { l: LoopRow; onChange: () => void }) {
   const { focus } = useNav()
   const open = useOpener()
-  const quick = useQuickClose()
+  const close = useClose()
   const [leaving, setLeaving] = useState(false)
+  const [ask, setAsk] = useState<null | 'done' | 'drop'>(null)
   const ref = useRef<HTMLLIElement>(null)
   const ready = Number(l.has_draft) > 0
   const selected = focus?.type === 'loop' && focus.id === l.id
 
   // A closed row strikes through and fades where it stands, then the list refreshes.
-  const act = (what: 'done' | 'snooze' | 'dismiss') => {
+  const finish = (status: 'closed' | 'dropped' | 'parked', reason: string) => {
+    setAsk(null)
     setLeaving(true)
-    void quick(l, what, () => window.setTimeout(onChange, 520))
+    void close(l, status, reason, () => window.setTimeout(onChange, 520))
+  }
+  const act = (what: 'done' | 'snooze' | 'dismiss') => {
+    if (what === 'snooze') finish('parked', '')
+    else setAsk((a) => (a === (what === 'done' ? 'done' : 'drop') ? null : what === 'done' ? 'done' : 'drop'))
   }
 
   useEffect(() => {
@@ -61,7 +69,7 @@ export function ItemRow({ l, onChange }: { l: LoopRow; onChange: () => void }) {
   })
 
   return (
-    <li ref={ref} data-row={l.id} className={`item${leaving ? ' leaving' : ''}${selected ? ' current' : ''}`}>
+    <li ref={ref} data-row={l.id} className={`item${leaving ? ' leaving' : ''}${selected ? ' current' : ''}${ask ? ' asking' : ''}`}>
       <Glyph side={l.side} />
       <button className="item-t" onClick={() => open({ type: 'loop', id: l.id })}>{l.obligation}</button>
       <span className="item-meta">
@@ -83,6 +91,11 @@ export function ItemRow({ l, onChange }: { l: LoopRow; onChange: () => void }) {
         <button title="Snooze a week (S)" onClick={() => act('snooze')}><Clock size={14} /></button>
         <button title="Not a thing" onClick={() => act('dismiss')}><X size={14} /></button>
       </span>
+      {ask && (
+        <div className="item-how">
+          <HowAsk ask={ask} onFinish={finish} onCancel={() => setAsk(null)} />
+        </div>
+      )}
     </li>
   )
 }

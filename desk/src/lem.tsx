@@ -74,12 +74,19 @@ interface LemApi {
   show: (scope?: Partial<ChatScope>) => void
   collapse: () => void
   isOpen: boolean
+  /** a `write` for this scope is still running */
+  isWriting: (key: string) => boolean
 }
 
-const Ctx = createContext<LemApi>({ ask: () => {}, write: () => {}, show: () => {}, collapse: () => {}, isOpen: false })
+const Ctx = createContext<LemApi>({ ask: () => {}, write: () => {}, show: () => {}, collapse: () => {}, isOpen: false, isWriting: () => false })
 export const useLem = () => useContext(Ctx)
 
-type Seed = { text: string; n: number } | null
+/* A message waiting to be sent belongs to one conversation and is sent once. It used to be
+   one loose value that whichever conversation mounted next would send, so opening another
+   conversation (Ask on a meeting, say) sent the last thing asked somewhere else again. */
+type Seed = { text: string; n: number; key: string } | null
+/** A `write` in flight: sent from out of sight, so the chat that is open stays as it was. */
+interface Writing { n: number; text: string; scope: ChatScope }
 
 /** "Do" is a piece of work, so it gets a row in `tasks` — what the pills read, and how the
  *  work is findable tomorrow. Lem closes the row when it finishes. Same write as before. */
@@ -104,9 +111,15 @@ async function asTask(text: string, scopeKey: string): Promise<string> {
 
 export function LemProvider({ children }: { children: ReactNode }) {
   const [isOpen, setOpen] = useState(false)
-  const [scope, setScope] = useState<ChatScope | null>(null)
+  const [scope, setScopeState] = useState<ChatScope | null>(null)
   const [seed, setSeed] = useState<Seed>(null)
+  const [writes, setWrites] = useState<Writing[]>([])
   const n = useRef(0)
+  const sent = useRef(new Set<number>())
+  const scopeRef = useRef<ChatScope | null>(null)
+  const setScope = useCallback((s: ChatScope) => { scopeRef.current = s; setScopeState(s) }, [])
+  /** true the first time a seed is asked for, never again */
+  const takeSeed = useCallback((k: number) => { if (sent.current.has(k)) return false; sent.current.add(k); return true }, [])
   // the main conversation for now, and when the dock was last used (for a tab left open overnight)
   const main = useRef<ChatScope>(todaysHome())
   const touched = useRef(Date.now())
@@ -126,26 +139,29 @@ export function LemProvider({ children }: { children: ReactNode }) {
 
   const ask = useCallback((text: string, s?: Partial<ChatScope>) => {
     // a named scope wins; otherwise carry on in whichever conversation was last open
-    setScope((cur) => (s ? { ...HOME, ...s } : carryOn(cur)))
-    setSeed({ text, n: ++n.current })
+    const to = s ? { ...HOME, ...s } : carryOn(scopeRef.current)
+    setScope(to)
+    setSeed({ text, n: ++n.current, key: to.key })
     setOpen(true)
   }, [])
   const write = useCallback((text: string, s?: Partial<ChatScope>) => {
-    setScope((cur) => (s ? { ...HOME, ...s } : carryOn(cur)))
-    setSeed({ text, n: ++n.current })
+    const to = s ? { ...HOME, ...s } : carryOn(scopeRef.current)
+    // one at a time per conversation; the buttons that ask are off while it runs
+    setWrites((w) => (w.some((x) => x.scope.key === to.key) ? w : [...w, { n: ++n.current, text, scope: to }]))
   }, [])
   const show = useCallback((s?: Partial<ChatScope>) => {
-    if (s) setScope({ ...HOME, ...s })
-    else setScope((cur) => carryOn(cur))
+    setScope(s ? { ...HOME, ...s } : carryOn(scopeRef.current))
     setOpen(true)
   }, [])
   const collapse = useCallback(() => setOpen(false), [])
+  const isWriting = useCallback((key: string) => writes.some((w) => w.scope.key === key), [writes])
+  const written = useCallback((k: number) => setWrites((w) => w.filter((x) => x.n !== k)), [])
 
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
         e.preventDefault()
-        if (isOpen) setOpen(false); else { setScope((cur) => carryOn(cur)); setOpen(true) }
+        if (isOpen) setOpen(false); else { setScope(carryOn(scopeRef.current)); setOpen(true) }
       }
     }
     window.addEventListener('keydown', on)
@@ -153,16 +169,63 @@ export function LemProvider({ children }: { children: ReactNode }) {
   }, [isOpen])
 
   return (
-    <Ctx.Provider value={{ ask, write, show, collapse, isOpen }}>
-      <DockState.Provider value={{ scope, seed, setScope, isOpen, setOpen, home: () => main.current }}>
+    <Ctx.Provider value={{ ask, write, show, collapse, isOpen, isWriting }}>
+      <DockState.Provider value={{ scope, seed, takeSeed, setScope, isOpen, setOpen, home: () => main.current }}>
         {children}
+        {writes.map((w) => <Writer key={w.n} w={w} onDone={written} />)}
       </DockState.Provider>
     </Ctx.Provider>
   )
 }
 
-interface Dock { scope: ChatScope | null; seed: Seed; setScope: (s: ChatScope) => void; isOpen: boolean; setOpen: (v: boolean) => void; home: () => ChatScope }
-const DockState = createContext<Dock>({ scope: null, seed: null, setScope: () => {}, isOpen: false, setOpen: () => {}, home: todaysHome })
+interface Dock { scope: ChatScope | null; seed: Seed; takeSeed: (n: number) => boolean; setScope: (s: ChatScope) => void; isOpen: boolean; setOpen: (v: boolean) => void; home: () => ChatScope }
+const DockState = createContext<Dock>({ scope: null, seed: null, takeSeed: () => false, setScope: () => {}, isOpen: false, setOpen: () => {}, home: todaysHome })
+
+/* ---------------- work asked for from a pane ---------------- */
+
+/** Sends one `write` in its own conversation, out of sight, and lets go when the run ends.
+ *  The pane that asked shows it being written and re-reads the draft when it is done. */
+function Writer({ w, onDone }: { w: Writing; onDone: (n: number) => void }) {
+  const { bump } = useNav()
+  // undefined: still looking for the conversation this scope already has
+  const [convId, setConvId] = useState<string | null | undefined>(undefined)
+  useEffect(() => {
+    let live = true
+    void rememberedConversation(w.scope.key).then((id) => { if (live) setConvId(id) })
+    return () => { live = false }
+  }, [w.scope.key])
+  const instructions = useMemo(() => instructionsFor(w.scope.about), [w.scope.about])
+  const thread = useConversationMessages({ client, agentName: 'pod_default', conversationId: convId ?? null, instructions, autoResume: false })
+  const running = thread.isStreaming || thread.isRunning
+  const began = useRef(false)
+  const sawRun = useRef(false)
+  const finish = useRef(false)
+  const done = () => { if (finish.current) return; finish.current = true; bump(); onDone(w.n) }
+
+  useEffect(() => {
+    if (convId === undefined || began.current) return
+    began.current = true
+    void (async () => {
+      try {
+        let id = convId
+        if (!id) {
+          const c = await client.conversations.createForAgent('pod_default') as { id: string }
+          id = c.id
+          setConvId(id)
+        }
+        void remember(w.scope.key, id, w.scope.title)
+        await thread.sendMessage(w.text, { conversationId: id })
+      } catch (err) { console.error(`${tm()} could not take that`, err); done() }
+    })()
+  }, [convId])
+  useEffect(() => {
+    if (running) { sawRun.current = true; return }
+    if (sawRun.current) done()
+  }, [running])
+  // never left spinning: a run that cannot be seen ending is let go after a few minutes
+  useEffect(() => { const t = window.setTimeout(done, 6 * 60_000); return () => window.clearTimeout(t) }, [])
+  return null
+}
 
 /* ---------------- context from Focus ---------------- */
 
@@ -238,7 +301,7 @@ function ModeSwitch({ mode, setMode }: { mode: 'ask' | 'do'; setMode: (m: 'ask' 
 
 export function LemDock() {
   const dock = useContext(DockState)
-  const { seed, setScope, isOpen, setOpen } = dock
+  const { seed, takeSeed, setScope, isOpen, setOpen } = dock
   // opened before anything named a conversation: carry on in today's main one
   const scope = dock.scope ?? (isOpen ? dock.home() : null)
   const { ask } = useLem()
@@ -338,7 +401,7 @@ export function LemDock() {
               </span>
             </div>
           )}
-          <Chat key={live.key} scope={live} seed={seed} onRunning={setRunning} active={isOpen} />
+          <Chat key={live.key} scope={live} seed={seed?.key === live.key ? seed : null} takeSeed={takeSeed} onRunning={setRunning} active={isOpen} />
         </div>
       )}
       {!isOpen && (
@@ -371,6 +434,7 @@ function scopeFor(t: { scope_key: string; title: string }): ChatScope {
   if (k.startsWith('company:')) return { key: k, title: t.title, about: `${t.title.replace(/^About /, '')} (company_id ${k.slice(8)})` }
   if (k.startsWith('workstream:')) return { key: k, title: t.title, about: `the workstream "${t.title}" (work_project_id ${k.slice(11)})` }
   if (k.startsWith('loop:')) return { key: k, title: t.title, about: `the commitment "${t.title}" (loop_id ${k.slice(5)})` }
+  if (k.startsWith('meeting:')) return { key: k, title: t.title, about: `their meeting "${t.title}" (calendar row ${k.slice(8)} in interactions)` }
   return { ...HOME, key: k, title: t.title || '' }
 }
 
@@ -404,6 +468,20 @@ function stepLabel(m: Msg): string | null {
   return 'Working on it'
 }
 
+/* What a pane's buttons send is written for the teammate, not to be read back. In the
+   conversation it shows as the one line the person actually asked for. */
+function asSaid(t: string): string {
+  const said = t.match(/ My direction: "([\s\S]*)"\. End with the card marker\.$/)?.[1]
+  const tail = said ? `: “${said}”` : ''
+  let m = t.match(/^Write a short nudge to (.+?) about "[\s\S]*End with the card marker\.$/)
+  if (m) return `Write the nudge to ${m[1].split(' ')[0]}${tail}`
+  m = t.match(/^Prepare "(.+?)" for me \(commitment [\s\S]*End with the card marker\.$/)
+  if (m) return `Prepare “${m[1]}”${tail}`
+  m = t.match(/^Write the short brief for my meeting "(.+?)" on [\s\S]*Run first_meetings/)
+  if (m) return `Write the brief for “${m[1]}”`
+  return t
+}
+
 interface Turn { user?: string; steps: string[]; replies: string[] }
 
 function toTurns(msgs: Msg[]): Turn[] {
@@ -412,7 +490,7 @@ function toTurns(msgs: Msg[]): Turn[] {
   for (const m of msgs) {
     const t = textOf(m)
     if (m.role === 'user' && t) {
-      cur = { user: t.replace(/\n\n\(This is task [\s\S]*$/, '').replace(/^Please do this: /, ''), steps: [], replies: [] }
+      cur = { user: asSaid(t.replace(/\n\n\(This is task [\s\S]*$/, '').replace(/^Please do this: /, '')), steps: [], replies: [] }
       out.push(cur)
       continue
     }
@@ -471,8 +549,14 @@ const STARTERS = [
   'What did I promise on my last call?',
 ]
 
-function Chat({ scope, seed, onRunning, active }: {
-  scope: ChatScope; seed: Seed; onRunning: (v: boolean) => void; active: boolean
+const instructionsFor = (about: string) =>
+  `You are ${tm()}, talking to the person inside their desk app, which shows cards.\nCONTEXT: ${about}\n`
+  + `Answer in one or two sentences unless they ask for more; at most four short bullets. `
+  + `Never mention workflows, schedules, functions, tables or ids. `
+  + `When you prepare an email, meeting or document, end with its [[draft:id]] or [[doc:id]] marker — never paste it.`
+
+function Chat({ scope, seed, takeSeed, onRunning, active }: {
+  scope: ChatScope; seed: Seed; takeSeed: (n: number) => boolean; onRunning: (v: boolean) => void; active: boolean
 }) {
   const [convId, setConvId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
@@ -492,13 +576,7 @@ function Chat({ scope, seed, onRunning, active }: {
 
   useEffect(() => { if (!booting && active) inputRef.current?.focus() }, [booting, active, scope.key])
 
-  const instructions = useMemo(
-    () => `You are ${tm()}, talking to the person inside their desk app, which shows cards.\nCONTEXT: ${scope.about}\n`
-        + `Answer in one or two sentences unless they ask for more; at most four short bullets. `
-        + `Never mention workflows, schedules, functions, tables or ids. `
-        + `When you prepare an email, meeting or document, end with its [[draft:id]] or [[doc:id]] marker — never paste it.`,
-    [scope.about],
-  )
+  const instructions = useMemo(() => instructionsFor(scope.about), [scope.about])
 
   const thread = useConversationMessages({
     client, agentName: 'pod_default', conversationId: convId,
@@ -526,10 +604,8 @@ function Chat({ scope, seed, onRunning, active }: {
     })()
   }, [running, scope.key])
 
-  const seededRef = useRef<number | null>(null)
   useEffect(() => {
-    if (!seed || booting || seededRef.current === seed.n) return
-    seededRef.current = seed.n
+    if (!seed || booting || seed.key !== scope.key || !takeSeed(seed.n)) return
     void (async () => {
       try {
         const id = await ensureConversation(seed.text)

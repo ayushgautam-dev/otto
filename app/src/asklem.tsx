@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { Plus, ChevronDown, X } from 'lucide-react'
-import { Chat, type ChatScope } from './chat'
+import { Chat, Writer, type ChatScope, type Writing } from './chat'
 import { useSql, sql, rev, ageLabel, lit } from './lib'
 import { useNav, type SheetTarget } from './nav'
 
@@ -10,9 +10,13 @@ import { tm } from './teammate'
    earlier conversation is one click away in the title menu. */
 
 type Ask = (seed: string, scope?: Partial<ChatScope>) => void
-interface Panel { ask: Ask; write: Ask; open: (scope?: Partial<ChatScope>) => void; close: () => void; isOpen: boolean }
+interface Panel {
+  ask: Ask; write: Ask; open: (scope?: Partial<ChatScope>) => void; close: () => void; isOpen: boolean
+  /** a `write` for this scope is still running */
+  isWriting: (key: string) => boolean
+}
 
-const Ctx = createContext<Panel>({ ask: () => {}, write: () => {}, open: () => {}, close: () => {}, isOpen: false })
+const Ctx = createContext<Panel>({ ask: () => {}, write: () => {}, open: () => {}, close: () => {}, isOpen: false, isWriting: () => false })
 export const useAskLem = () => useContext(Ctx).ask
 export const useLemPanel = () => useContext(Ctx)
 
@@ -56,6 +60,7 @@ function scopeFor(t: ThreadRow): ChatScope {
   if (k.startsWith('person:')) return { key: k, title: t.title, about: `${t.title.replace(/^About /, '')} (person_id ${k.slice(7)})` }
   if (k.startsWith('company:')) return { key: k, title: t.title, about: `${t.title.replace(/^About /, '')} (company_id ${k.slice(8)})` }
   if (k.startsWith('loop:')) return { key: k, title: t.title, about: `the commitment "${t.title}" (loop_id ${k.slice(5)})` }
+  if (k.startsWith('meeting:')) return { key: k, title: t.title, about: `their meeting "${t.title}" (calendar row ${k.slice(8)} in interactions)` }
   return { ...HOME, key: k, title: t.title || '' }
 }
 
@@ -165,11 +170,18 @@ export function AskLemProvider({ children }: { children: ReactNode }) {
     openSheet({ type: 'lem', key: s.key, title: s.title, about: s.about, seed })
   }, [openSheet])
   /** Send this without bringing the chat forward: the result shows where it was asked
-   *  for (a draft appearing under the item), not as a conversation to read. */
+   *  for (a draft appearing under the item), not as a conversation to read. It used to
+   *  go through the chat tab, which swapped whatever conversation was open there for the
+   *  item's; now it is sent out of sight and the chat tab stays as it was. */
+  const [writes, setWrites] = useState<Writing[]>([])
+  const n = useRef(0)
   const write = useCallback<Ask>((seed, scope) => {
     const s = { ...main.current, ...(scope ?? {}) }
-    openSheet({ type: 'lem', key: s.key, title: s.title, about: s.about, seed }, true)
-  }, [openSheet])
+    // one at a time per conversation; the buttons that ask are off while it runs
+    setWrites((w) => (w.some((x) => x.scope.key === s.key) ? w : [...w, { n: ++n.current, text: seed, scope: s }]))
+  }, [])
+  const isWriting = useCallback((key: string) => writes.some((w) => w.scope.key === key), [writes])
+  const written = useCallback((k: number) => setWrites((w) => w.filter((x) => x.n !== k)), [])
   const open = useCallback((scope?: Partial<ChatScope>) => {
     const existing = tabs.find((t) => t.type === 'lem') as Extract<SheetTarget, { type: 'lem' }> | undefined
     // carry on in the open conversation, unless it is a main one from an earlier day
@@ -194,8 +206,9 @@ export function AskLemProvider({ children }: { children: ReactNode }) {
   }, [isOpen, open, close])
 
   return (
-    <Ctx.Provider value={{ ask, write, open, close, isOpen }}>
+    <Ctx.Provider value={{ ask, write, open, close, isOpen, isWriting }}>
       {children}
+      {writes.map((w) => <Writer key={w.n} w={w} onDone={written} />)}
     </Ctx.Provider>
   )
 }

@@ -41,6 +41,9 @@ const firstMeetingBrief = (meeting: string) =>
    and not exists (select 1 from interactions e where e.source='calendar' and e.id <> ${meeting}.id
                    and e.occurred_at < ${meeting}.occurred_at and e.participants::text ilike '%' || p.email || '%')`
 
+/** A title as long as a paragraph (invites from strangers often are) cut at a word, with the rest on hover. */
+const shorten = (t: string, n = 64) => (t.length > n ? `${t.slice(0, n).replace(/\s+\S*$/, '')}…` : t)
+
 function useNow(ms = 60000) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), ms); return () => window.clearInterval(t) }, [ms])
@@ -87,8 +90,8 @@ function Ribbon({ meets, now }: { meets: Meet[]; now: number }) {
             // a meeting opens: who is coming, what is open with them, and the brief if they are new
             <button key={m.id} className={`mpill${past ? ' past' : ''}${m.id === nextId ? ' next' : ''}`}
               onClick={() => open({ type: 'meeting', id: m.id })}
-              title={Number(m.briefs) > 0 ? 'A brief is ready for this one' : 'Open'}>
-              <small>{fmtTime(m.starts_at)}</small> {cleanTitle(m.title)}
+              title={`${cleanTitle(m.title)}${Number(m.briefs) > 0 ? ' · a brief is ready' : ''}`}>
+              <small>{fmtTime(m.starts_at)}</small> <span className="mpill-t">{cleanTitle(m.title)}</span>
               {Number(m.briefs) > 0 && !past && <i className="mpill-brief" aria-label="Brief ready" />}
             </button>
           )
@@ -105,7 +108,7 @@ function Masthead({ name }: { name: string }) {
     `select i.id, i.subject as title, i.occurred_at as starts_at,
             (select count(*) from people p where ${firstMeetingBrief('i')}) as briefs
      from interactions i
-     where i.source='calendar' and i.kind='meeting'
+     where i.source='calendar' and i.kind='meeting' and coalesce(i.triage,'') <> 'noise'
        and i.occurred_at >= ${lit(startOfToday())}
        and i.occurred_at < ${lit(endOfToday())}
      order by i.occurred_at asc`, version))
@@ -118,7 +121,7 @@ function Masthead({ name }: { name: string }) {
       <h1 className="display">{greeting()}, {name}.</h1>
       <p className="lede">
         {next
-          ? <>Next up, <b>{cleanTitle(next.title)}</b> at {fmtTime(next.starts_at)}.</>
+          ? <>Next up, <b title={cleanTitle(next.title)}>{shorten(cleanTitle(next.title))}</b> at {fmtTime(next.starts_at)}.</>
           : q.items.length ? <>That’s the calendar done for today.</> : <>Nothing on your calendar today.</>}
       </p>
       {q.items.length > 0 && <Ribbon meets={q.items} now={now} />}
@@ -149,7 +152,7 @@ function ReadyShelf() {
   const briefs = useSql<{ id: string; title: string; starts_at: string; person: string; avatar_url?: string | null; research: string }>(rev(
     `select i.id, i.subject as title, i.occurred_at as starts_at, p.name as person, p.avatar_url, left(p.research, 400) as research
      from interactions i join people p on ${firstMeetingBrief('i')}
-     where i.source='calendar' and i.kind='meeting'
+     where i.source='calendar' and i.kind='meeting' and coalesce(i.triage,'') <> 'noise'
        and i.occurred_at > now() and i.occurred_at < now() + interval '2 days'
      order by i.occurred_at asc limit 4`, version))
   if (!q.items.length && !briefs.items.length) return null

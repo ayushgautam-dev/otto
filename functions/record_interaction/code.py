@@ -275,8 +275,13 @@ async def record_interaction(ctx: FunctionContext, data: RecordInput) -> RecordR
     # Meetings are the one kind of row that changes after it is written: they get moved
     # and renamed. Keep what is stored for each so a change can be carried over.
     meetings = {r["external_id"]: r for r in rows(
-        "select id, external_id, occurred_at, subject, account_id from interactions "
+        "select id, external_id, occurred_at, subject, account_id, thread_ref, triage from interactions "
         "where source = 'calendar' and external_id is not null")}
+    # A series the person took off their desk stays off it: its later occurrences arrive
+    # marked as noise too, so nothing reads, briefs or shows them.
+    muted_series = {r["thread_ref"] for r in meetings.values()
+                    if r.get("triage") == "noise" and r.get("thread_ref")
+                    and r["thread_ref"] != r["external_id"]}
     person_by_email = {r["email"]: r["id"] for r in rows(
         "select id, email from people where email is not null")}
     company_by_domain = {r["domain"]: r["id"] for r in rows(
@@ -321,6 +326,8 @@ async def record_interaction(ctx: FunctionContext, data: RecordInput) -> RecordR
         }
         if item.thread_ref:
             row["thread_ref"] = item.thread_ref[:300]
+            if row["source"] == "calendar" and row["thread_ref"] in muted_series:
+                row["triage"] = "noise"
         if item.account_id:
             row["account_id"] = item.account_id[:80]
         if item.subject:

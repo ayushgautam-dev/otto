@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { X, Plus, Download, Copy, ExternalLink, FileText, CalendarPlus, Send, Check, Video, Clock } from 'lucide-react'
+import { X, Plus, Download, Copy, ExternalLink, FileText, CalendarPlus, Send, Check, Video, Clock, ArrowDownUp } from 'lucide-react'
+import { useCurrentUser } from 'lemma-sdk/react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { useSql, records, runFn, rev, lit, isGmailThread, isOutlookThread, client } from './lib'
 import { useAccounts, useThreadAccount, accountLabel } from './accounts'
@@ -109,38 +110,116 @@ export function LemNote({ text }: { text?: string | null }) {
   )
 }
 
-function Recipients({ label, emails, onChange }: {
+/* Who to write to, from the people already known. Everyone with an address can come up,
+   not only the team: most mail that matters goes outside the company. The ones written to
+   or met with most in the last months come first, as in any mail app, then teammates. */
+const FREE_MAIL = /@(gmail|googlemail|outlook|hotmail|live|yahoo|icloud|me|proton|protonmail|aol)\./i
+interface Known { email: string; name: string; avatar_url?: string | null; company?: string | null; [k: string]: unknown }
+
+function useKnownPeople(typed: string, skip: string[]) {
+  const { user } = useCurrentUser({ client })
+  const me = String((user as { email?: string } | undefined)?.email ?? '').toLowerCase()
+  const team = me.includes('@') && !FREE_MAIL.test(me) ? me.split('@')[1] : ''
+  const t = typed.trim().toLowerCase().replace(/[%_\\]/g, '')
+  const q = useSql<Known>(t
+    ? `select lower(p.email) as email, p.name, p.avatar_url, coalesce(c.name,'') as company
+       from people p left join companies c on c.id = p.company_id
+       where p.email like '%@%.%'
+         and (lower(p.name) like ${lit(`${t}%`)} or lower(p.name) like ${lit(`% ${t}%`)} or lower(p.email) like ${lit(`${t}%`)})
+       order by (select count(*) from interactions i where i.person_id = p.id
+                   and i.occurred_at > now() - interval '180 days') desc,
+                ${team ? `(lower(p.email) like ${lit(`%@${team}`)}) desc,` : ''} p.name
+       limit 12`
+    : null)
+  return q.items.filter((p) => !skip.includes(p.email)).slice(0, 6)
+}
+
+const DRAG = 'application/x-otto-recipient'
+
+function Recipients({ label, emails, onChange, moveTo, onMove, onTake, onDragging, taken = [] }: {
   label: string; emails: string[]; onChange: (next: string[]) => void
+  /** already on the other line, so not offered here */
+  taken?: string[]
+  /** the other line an address can go to ("Cc" from To, "To" from Cc), by its button or by dragging */
+  moveTo?: string; onMove?: (email: string) => void
+  /** an address dragged here from the other line */
+  onTake?: (email: string) => void
+  onDragging?: (on: boolean) => void
 }) {
   const people = usePeopleByEmail(emails)
   const [adding, setAdding] = useState(false)
   const [val, setVal] = useState('')
+  const [hi, setHi] = useState(0)
+  const [over, setOver] = useState(false)
+  const known = useKnownPeople(adding ? val : '', [...emails, ...taken])
+  useEffect(() => { setHi(0) }, [val])
+  const add = (e: string) => { if (!emails.includes(e)) onChange([...emails, e]); setVal('') }
   const commit = () => {
     const v = val.trim().toLowerCase()
-    if (isEmail(v) && !emails.includes(v)) onChange([...emails, v])
+    if (isEmail(v)) add(v)
     setVal(''); setAdding(false)
   }
+  const pick = (p: Known) => { add(p.email); setAdding(true) }
   return (
-    <div className="rcpt">
+    <div className={`rcpt${over ? ' over' : ''}`}
+      onDragOver={(e) => { if (onTake && e.dataTransfer.types.includes(DRAG)) { e.preventDefault(); setOver(true) } }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(false) }}
+      onDrop={(e) => {
+        setOver(false)
+        const got = e.dataTransfer.getData(DRAG)
+        if (!got || !onTake) return
+        const { email, from } = JSON.parse(got) as { email: string; from: string }
+        if (from !== label) { e.preventDefault(); onTake(email) }
+      }}>
       <span className="rcpt-k">{label}</span>
       <div className="rcpt-list">
         {emails.map((e) => {
           const p = people.get(e.toLowerCase())
           return (
-            <span key={e} className="rcpt-chip" title={e}>
+            <span key={e} className="rcpt-chip" title={e} draggable={!!onMove}
+              onDragStart={(ev) => { ev.dataTransfer.setData(DRAG, JSON.stringify({ email: e, from: label })); ev.dataTransfer.effectAllowed = 'move'; onDragging?.(true) }}
+              onDragEnd={() => onDragging?.(false)}>
               <Avatar name={p?.name || e} src={p?.avatar_url} size="xs" />
               <span>{p?.name || e}</span>
+              {onMove && moveTo && (
+                <button className="rcpt-mv" title={`Move to ${moveTo}`} aria-label={`Move ${e} to ${moveTo}`} onClick={() => onMove(e)}>
+                  <ArrowDownUp size={11} />
+                </button>
+              )}
               <button aria-label={`Remove ${e}`} onClick={() => onChange(emails.filter((x) => x !== e))}><X size={11} /></button>
             </span>
           )
         })}
         {adding ? (
-          <input
-            autoFocus className="rcpt-in" value={val} placeholder="name@company.com"
-            onChange={(e) => setVal(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit() } if (e.key === 'Escape') { e.stopPropagation(); setVal(''); setAdding(false) } }}
-          />
+          <span className="rcpt-add-wrap">
+            <input
+              autoFocus className="rcpt-in" value={val} placeholder="Name or email"
+              onChange={(e) => setVal(e.target.value)}
+              onBlur={commit}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowDown' && known.length) { e.preventDefault(); setHi((h) => (h + 1) % known.length) }
+                if (e.key === 'ArrowUp' && known.length) { e.preventDefault(); setHi((h) => (h - 1 + known.length) % known.length) }
+                if (e.key === 'Enter' || e.key === ',' || e.key === 'Tab') {
+                  if (e.key === 'Tab' && !val.trim()) return
+                  e.preventDefault()
+                  if (known[hi] && !isEmail(val)) pick(known[hi]); else commit()
+                }
+                if (e.key === 'Backspace' && !val && emails.length) onChange(emails.slice(0, -1))
+                if (e.key === 'Escape') { e.stopPropagation(); setVal(''); setAdding(false) }
+              }}
+            />
+            {known.length > 0 && (
+              <span className="rcpt-sug" role="listbox">
+                {known.map((p, i) => (
+                  <button key={p.email} role="option" aria-selected={i === hi} className={i === hi ? 'on' : ''}
+                    onMouseDown={(e) => e.preventDefault()} onMouseEnter={() => setHi(i)} onClick={() => pick(p)}>
+                    <Avatar name={p.name || p.email} src={p.avatar_url} size="xs" />
+                    <span className="rcpt-sug-t"><b>{p.name || p.email}</b><small>{p.email}{p.company ? ` · ${p.company}` : ''}</small></span>
+                  </button>
+                ))}
+              </span>
+            )}
+          </span>
         ) : (
           <button className="rcpt-add" onClick={() => setAdding(true)} aria-label={`Add ${label}`}><Plus size={12} /></button>
         )}
@@ -270,6 +349,27 @@ export function Letter({ draft, onSent, docs = [], onEdit }: {
     ? threadAccount ?? (isOutlookThread(draft.thread_ref) ? accounts.mail.find((a) => a.provider === 'outlook') ?? null : null)
     : accounts.mail.find((a) => a.id === fromId) ?? accounts.primary
   const who = draft.person || to[0] || ''
+  const [dragging, setDragging] = useState(false)
+  const move = (e: string, toCc: boolean) => {
+    if (toCc) { setTo((t) => t.filter((x) => x !== e)); setCc((c) => (c.includes(e) ? c : [...c, e])); setShowCc(true) }
+    else { setCc((c) => c.filter((x) => x !== e)); setTo((t) => (t.includes(e) ? t : [...t, e])) }
+  }
+
+  /* Rewritten by the teammate while it is open (a redo, or a change asked for in the chat): show
+     the new version. Asking for a rewrite means wanting it, so unsent edits here give way. */
+  const stored = [draft.subject ?? '', draft.body ?? '', asList(draft.to_emails).join(','), asList(draft.cc_emails).join(',')].join('\u0000')
+  const seen = useRef(stored)
+  useEffect(() => {
+    if (seen.current === stored) return
+    seen.current = stored
+    setSubject(draft.subject ?? '')
+    setBody(draft.body ?? '')
+    const t = asList(draft.to_emails)
+    if (t.length) setTo(t)
+    const c = asList(draft.cc_emails)
+    setCc(c)
+    if (c.length) setShowCc(true)
+  }, [stored])
 
   useEffect(() => {
     const el = area.current
@@ -337,8 +437,8 @@ export function Letter({ draft, onSent, docs = [], onEdit }: {
             )}
         </div>
       )}
-      <Recipients label="To" emails={to} onChange={setTo} />
-      {showCc && <Recipients label="Cc" emails={cc} onChange={setCc} />}
+      <Recipients label="To" emails={to} onChange={setTo} moveTo="Cc" onMove={(e) => move(e, true)} onTake={(e) => move(e, false)} onDragging={setDragging} taken={cc} />
+      {(showCc || dragging) && <Recipients label="Cc" emails={cc} onChange={setCc} moveTo="To" onMove={(e) => move(e, false)} onTake={(e) => move(e, true)} onDragging={setDragging} taken={to} />}
       {isReply
         ? (subject ? <div className="letter-subj ro">{subject}</div> : null)
         : <input className="letter-subj" value={subject} placeholder="Subject" onChange={(e) => setSubject(e.target.value)} />}

@@ -55,17 +55,56 @@ export async function reopenLoop(loop: LoopRow) {
   })
 }
 
-/** The one-move versions used from a row's hover and the J/K keys. */
-export function useQuickClose() {
+/** Close it, with a few seconds to take it back. */
+export function useClose() {
   const toast = useToast()
-  return async (loop: LoopRow, what: 'done' | 'snooze' | 'dismiss', after: () => void) => {
-    if (what === 'done') await closeLoop(loop, 'closed', 'You marked this done')
-    if (what === 'snooze') await closeLoop(loop, 'parked', '')
-    if (what === 'dismiss') { await closeLoop(loop, 'dropped', 'You said this was not a real thing'); await rememberDismissal(loop, '') }
-    toast(what === 'snooze' ? 'Back in a week' : what === 'done' ? 'Marked done' : 'Dismissed',
+  return async (loop: LoopRow, status: 'closed' | 'dropped' | 'parked', reason: string, after: () => void) => {
+    await closeLoop(loop, status, reason)
+    if (status === 'dropped') await rememberDismissal(loop, reason)
+    toast(status === 'parked' ? 'Back in a week' : status === 'closed' ? 'Marked done' : 'Dismissed',
       async () => { await reopenLoop(loop); after() })
     after()
   }
+}
+
+/** "How did it get done?" or "Why isn’t this a thing?", asked wherever Done or Dismiss was
+ *  pressed — in an item's pane or on its row in a list. Both are optional: Enter on an empty
+ *  line closes it the plain way. */
+export function HowAsk({ ask, busy, onFinish, onCancel }: {
+  ask: 'done' | 'drop'; busy?: boolean
+  onFinish: (status: 'closed' | 'dropped', reason: string) => void
+  onCancel: () => void
+}) {
+  const [note, setNote] = useState('')
+  const submitNote = () => {
+    const n = note.trim()
+    onFinish(ask === 'done' ? 'closed' : 'dropped',
+      n || (ask === 'done' ? 'You marked this done' : 'You said this was not a real thing'))
+  }
+  return (
+    <div className="how">
+      <div className="how-q">{ask === 'done' ? 'How did it get done?' : 'Why isn’t this a thing?'}</div>
+      {ask === 'done' && (
+        <div className="how-chips">
+          {DONE_HOW.map((h) => (
+            <button key={h.label} className="chip-btn" disabled={busy} onClick={() => onFinish(h.status as 'closed', h.reason)}>{h.label}</button>
+          ))}
+        </div>
+      )}
+      <div className="how-note">
+        <input
+          autoFocus value={note}
+          placeholder={ask === 'done' ? 'Or say what happened — “sent the deck on WhatsApp”' : `Optional. ${tm()} stops raising things like it`}
+          onChange={(e) => setNote(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submitNote()
+            if (e.key === 'Escape') { e.stopPropagation(); onCancel() }
+          }}
+        />
+        <button className="btn ink sm" disabled={busy} onClick={submitNote}>{ask === 'done' ? 'Mark done' : 'Dismiss'}</button>
+      </div>
+    </div>
+  )
 }
 
 /** Done · Snooze · Dismiss, with the optional "how?" under Done and Dismiss. `lead` is
@@ -73,53 +112,20 @@ export function useQuickClose() {
 export function CloseBar({ loop, onClosed, lead }: {
   loop: LoopRow; onClosed: () => void; lead?: ReactNode
 }) {
-  const toast = useToast()
+  const close = useClose()
   const [ask, setAsk] = useState<null | 'done' | 'drop'>(null)
-  const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
 
   async function finish(status: 'closed' | 'dropped' | 'parked', reason: string) {
     if (busy) return
     setBusy(true)
-    await closeLoop(loop, status, reason)
-    if (status === 'dropped') await rememberDismissal(loop, reason)
-    toast(status === 'parked' ? 'Back in a week' : status === 'closed' ? 'Marked done' : 'Dismissed',
-      async () => { await reopenLoop(loop); onClosed() })
-    setBusy(false); setAsk(null); setNote('')
-    onClosed()
-  }
-  const submitNote = () => {
-    const n = note.trim()
-    void finish(ask === 'done' ? 'closed' : 'dropped',
-      n || (ask === 'done' ? 'You marked this done' : 'You said this was not a real thing'))
+    await close(loop, status, reason, onClosed)
+    setBusy(false); setAsk(null)
   }
 
   return (
     <div className="closebar">
-      {ask && (
-        <div className="how">
-          <div className="how-q">{ask === 'done' ? 'How did it get done?' : 'Why isn’t this a thing?'}</div>
-          {ask === 'done' && (
-            <div className="how-chips">
-              {DONE_HOW.map((h) => (
-                <button key={h.label} className="chip-btn" disabled={busy} onClick={() => void finish(h.status, h.reason)}>{h.label}</button>
-              ))}
-            </div>
-          )}
-          <div className="how-note">
-            <input
-              autoFocus value={note}
-              placeholder={ask === 'done' ? 'Or say what happened — “sent the deck on WhatsApp”' : `Optional. ${tm()} stops raising things like it`}
-              onChange={(e) => setNote(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') submitNote()
-                if (e.key === 'Escape') { e.stopPropagation(); setAsk(null) }
-              }}
-            />
-            <button className="btn ink sm" disabled={busy} onClick={submitNote}>{ask === 'done' ? 'Mark done' : 'Dismiss'}</button>
-          </div>
-        </div>
-      )}
+      {ask && <HowAsk ask={ask} busy={busy} onFinish={(st, r) => void finish(st, r)} onCancel={() => setAsk(null)} />}
       <div className="closebar-row">
         <div className="closebar-lead">{lead}</div>
         <div className="seg-acts">

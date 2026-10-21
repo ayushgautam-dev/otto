@@ -1,11 +1,11 @@
 import { useEffect, useState, useRef } from 'react'
-import { X, Maximize2, Minimize2, MessageCircle, Sparkles, Mail, NotebookPen, CalendarDays, Layers, FileText } from 'lucide-react'
+import { X, Maximize2, Minimize2, MessageCircle, Sparkles, Mail, NotebookPen, CalendarDays, Layers, FileText, EyeOff } from 'lucide-react'
 import { useCurrentUser } from 'lemma-sdk/react'
 import {
-  client, useSql, rev, lit, ageLabel, fmtDate, fmtTime, cleanTitle, records, isGmailThread,
+  client, sql, useSql, rev, lit, ageLabel, fmtDate, fmtTime, cleanTitle, records, isGmailThread,
   type PersonRow, type LoopRow, type TimelineRow,
 } from './lib'
-import { Avatar, Logo, Markdown, Brief, Empty, Loading, Orb } from './ui'
+import { Avatar, Logo, Markdown, Brief, Empty, Loading, Orb, useToast } from './ui'
 import { Board, boardSql, type BoardRow } from './screens/board'
 import { useNav, focusKey, InFocus, type Focus } from './nav'
 import { ItemList, Glyph } from './items'
@@ -14,6 +14,7 @@ import { Conversation } from './thread'
 import { Prepared, Paper, LemNote, draftForLoop, useDocsForLoop, type DraftRow } from './prepared'
 import { useLem } from './lem'
 import { tm } from './teammate'
+import { asChoices } from './choices'
 
 import { useAccounts, useThreadAccount, accountLabel } from './accounts'
 /* Focus: the panel beside the page — a strip of tabs, one per thing you have open. */
@@ -77,9 +78,10 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
   const draft = dq.items[0]
   const first = (l?.person || 'them').split(' ')[0]
   const [making, setMaking] = useState(false)
-  // null: the Redo button; a string: what they want changed, being typed
-  const [redo, setRedo] = useState<string | null>(null)
+  // null: closed; otherwise what they want, being typed, before asking for a draft or a redo
+  const [say, setSay] = useState<{ redo: boolean; text: string } | null>(null)
   const leave = () => { bump(); closeTab(focusKey(f)) }
+  const key = `loop:${f.id}`
 
   // A nudge starts as a real pending draft on the same conversation — the same write as before.
   async function startNudge() {
@@ -96,40 +98,46 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
     } finally { setMaking(false) }
   }
   /* Asking for a draft does not open the chat. The item's own pane says it is being
-     written, and the draft appears here when it is ready; the chat is for when somebody
-     chooses to talk. While waiting, the pane re-reads the draft every few seconds and
-     stops as soon as what is there has changed (or after a few minutes, in case it never does). */
-  const sig = `${draft?.id ?? ''}:${(draft?.body ?? '').length}:${JSON.stringify(draft?.options ?? '').length}:${docs.items.length}`
-  const [writing, setWriting] = useState<{ from: string; since: number } | null>(null)
+     written for as long as the run lasts, and re-reads the draft every few seconds so it
+     shows the moment it is there; the chat is for when somebody chooses to talk. */
+  const writing = lem.isWriting(key)
   useEffect(() => {
     if (!writing) return
-    if (sig !== writing.from || Date.now() - writing.since > 4 * 60_000) { setWriting(null); return }
-    const t = setTimeout(bump, 4000)
-    return () => clearTimeout(t)
-  }, [writing, sig, version])
+    const t = window.setInterval(bump, 4000)
+    return () => window.clearInterval(t)
+  }, [writing])
   const autoNudged = useRef(false)
   useEffect(() => {
     if (!f.nudge || !l || dq.isLoading || autoNudged.current) return
     autoNudged.current = true
     // a nudge opened from the desk is written straight away, in place
-    void (async () => { if (!draft) await startNudge(); quietWrite() })()
+    void (async () => { if (!draft) await startNudge(); lemWrite() })()
   }, [f.nudge, l?.id, dq.isLoading])
 
   if (q.isLoading && !l) return <div className="focus-body"><Loading /></div>
   if (!l) return <div className="focus-body"><Empty line="This item is gone." /></div>
 
-  const quietWrite = (direction?: string) => { if (!l) return; setWriting({ from: sig, since: Date.now() }); lemWrite(direction) }
   const lemWrite = (direction?: string) => {
-    const say = direction?.trim() ? ` My direction: "${direction.trim()}".` : ''
-    return lem.write(
+    if (!l) return
+    const said = direction?.trim() ? ` My direction: "${direction.trim()}".` : ''
+    lem.write(
     l.side === 'them'
-      ? `Write a short nudge to ${l.person} about "${l.obligation}" (commitment ${l.id}) in my voice, as a reply on the same conversation. Put it in the pending draft for that commitment if there is one.${say} End with the card marker.`
-      : `Prepare "${l.obligation}" for me (commitment ${l.id}). Use the otto-write skill and pick the right shape.${say} End with the card marker.`,
-    { key: `loop:${l.id}`, title: l.obligation, about: `the commitment "${l.obligation}" (loop_id ${l.id})` })
+      ? `Write a short nudge to ${l.person} about "${l.obligation}" (commitment ${l.id}) in my voice, as a reply on the same conversation. Put it in the pending draft for that commitment if there is one.${said} End with the card marker.`
+      : `Prepare "${l.obligation}" for me (commitment ${l.id}). Use the otto-write skill and pick the right shape.${said} End with the card marker.`,
+    { key, title: l.obligation, about: `the commitment "${l.obligation}" (loop_id ${l.id})` })
   }
-  const redoNow = () => { const t = redo ?? ''; setRedo(null); quietWrite(t) }
+  const go = async () => {
+    const t = say?.text ?? ''
+    setSay(null)
+    if (l.side === 'them' && !draft) await startNudge()
+    lemWrite(t)
+  }
 
-  const hasWork = !!draft || docs.items.length > 0
+  // a nudge that was started and not written yet holds only its greeting
+  const blank = !!draft && (draft.kind ?? 'email') === 'email' && !asChoices(draft.options)
+    && String(draft.body ?? '').replace(/^\s*(hi|hello|hey|dear)\b[^\n]*\n?/i, '').trim() === ''
+  const hasWork = (!!draft && !(writing && blank)) || docs.items.length > 0
+  const written = (!!draft && !blank) || docs.items.length > 0
 
   return (
     <>
@@ -159,14 +167,14 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
         {writing && (
           <div className="writing" role="status">
             <Orb live size={20} />
-            <div><b>{tm()} is writing it…</b><span>It will appear here. You can carry on.</span></div>
+            <div><b>{tm()} is {written ? 'rewriting' : 'writing'} it…</b><span>It will appear here. You can carry on.</span></div>
           </div>
         )}
         {writing && !hasWork ? null : hasWork ? (
           <div className="prepared">
             <div className="prepared-h"><Orb size={14} /> {tm()} prepared</div>
             {draft && <LemNote text={draft.note} />}
-            {draft && <Prepared draft={draft} docs={docs.items} onSent={leave} onDirect={(t) => quietWrite(t)} />}
+            {draft && <Prepared draft={draft} docs={docs.items} onSent={leave} onDirect={(t) => lemWrite(t)} />}
             {docs.items.map((d) => <Paper key={d.id} doc={d} />)}
           </div>
         ) : (
@@ -176,30 +184,42 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
               <b>{l.side === 'you' ? 'Nothing prepared yet.' : `Want to nudge ${first}?`}</b>
               <span>{l.side === 'you' ? `${tm()} can write it in your voice. You still press send.` : 'A short follow-up on the same conversation.'}</span>
             </div>
-            {l.side === 'you'
-              ? <button className="btn spark" onClick={() => quietWrite()}><Sparkles size={13} /> Prepare it</button>
-              : <button className="btn spark" disabled={making} onClick={() => void (async () => { await startNudge(); quietWrite() })()}>Nudge {first}</button>}
+            {!say && (l.side === 'you'
+              ? <button className="btn spark" onClick={() => setSay({ redo: false, text: '' })}><Sparkles size={13} /> Prepare it</button>
+              : <button className="btn spark" disabled={making} onClick={() => setSay({ redo: false, text: '' })}>Nudge {first}</button>)}
           </div>
         )}
       </div>
 
       <div className="focus-foot">
+        {say && (
+          <div className="direct">
+            <div className="direct-q">{say.redo ? 'What should change?' : `Anything ${tm()} should know?`}</div>
+            <textarea autoFocus rows={3} value={say.text}
+              placeholder={say.redo ? 'e.g. warmer, shorter, and mention the invoice is attached' : 'e.g. keep it to two lines and offer a call this week'}
+              onChange={(e) => setSay({ ...say, text: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void go() }
+                if (e.key === 'Escape') { e.stopPropagation(); setSay(null) }
+              }} />
+            <div className="direct-foot">
+              <span className="muted">Optional. Left empty, {tm()} uses its judgement.</span>
+              <span className="grow" />
+              <button className="link-q" onClick={() => setSay(null)}>Cancel</button>
+              <button className="btn ink sm" disabled={making} onClick={() => void go()}>
+                <Sparkles size={13} /> {say.redo ? 'Redo' : 'Write it'}
+              </button>
+            </div>
+          </div>
+        )}
         <CloseBar loop={l} onClosed={leave} lead={
           <>
-            {hasWork && (redo === null ? (
-              <button className="btn ghost sm" disabled={!!writing}
-                onClick={() => (l.side === 'them' && draft ? quietWrite() : setRedo(''))}>
-                <Sparkles size={13} /> {l.side === 'them' && draft ? `Let ${tm()} write it` : `Redo with ${tm()}`}
+            {hasWork && !say && (
+              <button className="btn ghost sm" disabled={writing} onClick={() => setSay({ redo: written, text: '' })}>
+                <Sparkles size={13} /> {written ? 'Redo' : `Let ${tm()} write it`}
               </button>
-            ) : (
-              <span className="redo-say">
-                <input autoFocus value={redo} placeholder="What should change? Leave empty to redo it"
-                  onChange={(e) => setRedo(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') redoNow(); if (e.key === 'Escape') setRedo(null) }} />
-                <button className="btn sm line" onClick={redoNow}>Redo</button>
-              </span>
-            ))}
-            <button className="btn ghost sm" onClick={() => lem.show({ key: `loop:${l.id}`, title: l.obligation, about: `the commitment "${l.obligation}" (loop_id ${l.id})` })}>
+            )}
+            <button className="btn ghost sm" onClick={() => lem.show({ key, title: l.obligation, about: `the commitment "${l.obligation}" (loop_id ${l.id})` })}>
               <MessageCircle size={13} /> Ask
             </button>
           </>
@@ -518,7 +538,7 @@ function WorkstreamFocus({ f }: { f: Extract<Focus, { type: 'workstream' }> }) {
    - and once it has happened, what the notes say.
    Who the meeting is with comes from the calendar; the brief lives on the person. */
 
-interface MeetRow { id: string; subject: string; occurred_at: string; participants?: unknown; thread_ref?: string | null; external_id?: string | null; [k: string]: unknown }
+interface MeetRow { id: string; subject: string; occurred_at: string; participants?: unknown; thread_ref?: string | null; external_id?: string | null; triage?: string | null; [k: string]: unknown }
 interface GuestRow { id: string; name: string; email: string; role?: string | null; avatar_url?: string | null; research?: string | null; company?: string | null; met: number; [k: string]: unknown }
 
 function attendeesOf(v: unknown): { email: string; name: string }[] {
@@ -529,19 +549,34 @@ function attendeesOf(v: unknown): { email: string; name: string }[] {
     .filter((p) => p.email)
 }
 
+/* Somebody else can put anything on your calendar. A meeting that is not yours to care about
+   is taken off the desk, not off the calendar: its row is marked noise, the same mark mail
+   that is not worth reading gets, so nothing reads it, briefs it or shows it, and the next
+   calendar sync leaves the mark alone. A series goes whole, and its later occurrences arrive
+   already marked (record_interaction). */
+async function setMeetingNoise(m: MeetRow, series: boolean, noise: boolean): Promise<string[]> {
+  const ids = series && m.thread_ref
+    ? (await sql<{ id: string }>(`select id from interactions where source='calendar' and thread_ref=${lit(m.thread_ref)}`)).map((r) => r.id)
+    : [m.id]
+  await Promise.all(ids.map((id) => records.update('interactions', id, { triage: noise ? 'noise' : null })))
+  return ids
+}
+
 function MeetingFocus({ f }: { f: Extract<Focus, { type: 'meeting' }> }) {
-  const { version, bump, push } = useNav()
+  const { version, bump, push, closeTab } = useNav()
   const lem = useLem()
+  const toast = useToast()
+  const [removing, setRemoving] = useState(false)
   const { user } = useCurrentUser({ client })
   const myDomain = (((user as { email?: string } | undefined)?.email ?? '').split('@')[1] ?? '').toLowerCase()
   const mq = useSql<MeetRow>(rev(
-    `select id, subject, occurred_at, participants, thread_ref, external_id from interactions where id=${lit(f.id)} limit 1`, version))
+    `select id, subject, occurred_at, participants, thread_ref, external_id, triage from interactions where id=${lit(f.id)} limit 1`, version))
   const m = mq.items[0]
   const invited = attendeesOf(m?.participants)
   const inList = invited.length ? invited.map((p) => lit(p.email)).join(',') : null
   const guests = useSql<GuestRow>(rev(inList
     ? `select p.id, p.name, p.email, p.role, p.avatar_url, p.research, coalesce(c.name,'') as company,
-              (select count(*) from interactions e where e.source='calendar' and e.occurred_at < now()
+              (select count(*) from interactions e where e.source='calendar' and e.occurred_at < now() and coalesce(e.triage,'') <> 'noise'
                  and e.id <> ${lit(f.id)} and e.participants::text ilike '%' || p.email || '%') as met
        from people p left join companies c on c.id=p.company_id where lower(p.email) in (${inList})`
     : null, version))
@@ -580,19 +615,54 @@ function MeetingFocus({ f }: { f: Extract<Focus, { type: 'meeting' }> }) {
     return !(g?.research ?? '').trim() && Number(g?.met ?? 0) === 0
   })
   const firstOf = (n: string) => n.split(' ')[0] || n
+  const removed = m.triage === 'noise'
+
+  async function remove(series: boolean) {
+    setRemoving(false)
+    const ids = await setMeetingNoise(m!, series, true)
+    toast(series ? 'Series removed from your desk' : 'Removed from your desk', async () => {
+      await Promise.all(ids.map((id) => records.update('interactions', id, { triage: null })))
+      bump()
+    })
+    bump(); closeTab(focusKey(f))
+  }
 
   return (
     <div className="focus-body">
-      <div className="hero">
+      <div className="hero meet-hero">
         <span className="ws-mark"><CalendarDays size={26} /></span>
         <div className="hero-t">
-          <h2>{title}</h2>
+          <h2 className="clamp" title={title}>{title}</h2>
           <div className="hero-s">{day}, {fmtTime(m.occurred_at)}{recurring && <><span className="sep">·</span>Recurring</>}</div>
         </div>
-        <button className="btn line sm" onClick={() => lem.show({
-          key: `meeting:${m.id}`, title, about: `their meeting "${title}" on ${day} (calendar row ${m.id} in interactions)`,
-        })}><MessageCircle size={13} /> Ask {tm()}</button>
+        <div className="hero-acts">
+          <button className="btn line sm" onClick={() => lem.show({
+            key: `meeting:${m.id}`, title, about: `their meeting "${title}" on ${day} (calendar row ${m.id} in interactions)`,
+          })}><MessageCircle size={13} /> Ask {tm()}</button>
+          {!removed && (
+            <button className="icon-btn" title="Not your meeting? Remove it from your desk. It stays on your calendar."
+              aria-label="Remove from your desk" onClick={() => setRemoving((v) => !v)}><EyeOff size={15} /></button>
+          )}
+        </div>
       </div>
+      {removing && (
+        <div className="confirm-strip" role="alertdialog" aria-label="Remove this meeting">
+          <div><b>Take it off your desk?</b><span>It stays on your calendar. {tm()} stops showing it and preparing for it.</span></div>
+          <div className="confirm-acts">
+            <button className="link-q" onClick={() => setRemoving(false)}>Cancel</button>
+            {recurring && <button className="btn line sm" onClick={() => void remove(true)}>Every one in the series</button>}
+            <button className="btn ink sm" onClick={() => void remove(false)}>{recurring ? 'Just this one' : 'Remove'}</button>
+          </div>
+        </div>
+      )}
+      {removed && (
+        <div className="confirm-strip">
+          <div><b>Off your desk.</b><span>It is still on your calendar; {tm()} leaves it alone.</span></div>
+          <div className="confirm-acts">
+            <button className="btn line sm" onClick={() => void setMeetingNoise(m, false, false).then(bump)}>Put it back</button>
+          </div>
+        </div>
+      )}
 
       {briefed.map((g) => (
         <div key={g.id} className="agenda">

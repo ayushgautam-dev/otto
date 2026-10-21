@@ -664,6 +664,21 @@ a.btn { text-decoration: none; }
 .chip-add { width: 21px; height: 21px; border-radius: 50%; color: var(--faint); display: inline-flex; align-items: center; justify-content: center; border: 1px dashed var(--line); }
 .chip-add:hover { color: var(--ink); border-color: var(--faint); }
 .chip-in { border: 0; outline: 0; background: none; font-size: 12.5px; min-width: 170px; }
+.chips-row.over { background: var(--soft); }
+.chip[draggable="true"] { cursor: grab; }
+.chip .chip-mv { opacity: 0; transition: opacity .12s; }
+.chip:hover .chip-mv, .chip .chip-mv:focus-visible { opacity: 1; }
+.chip-add-wrap { position: relative; display: inline-flex; flex: 1; min-width: 170px; }
+.chip-sug {
+  position: absolute; left: -6px; top: calc(100% + 6px); z-index: 30; width: min(320px, 80vw); padding: 4px;
+  border-radius: var(--r-2); background: var(--panel); box-shadow: var(--shadow-lift); display: flex; flex-direction: column;
+}
+.chip-sug button { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--r); text-align: left; }
+.chip-sug button.on { background: var(--soft); }
+.chip-sug .av { width: 22px; height: 22px; font-size: 9px; flex: none; }
+.chip-sug-t { display: flex; flex-direction: column; min-width: 0; }
+.chip-sug-t b { font-size: 13px; font-weight: 550; }
+.chip-sug-t small { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .subj-row { padding: 8px 14px; border-bottom: 1px solid var(--line-soft); }
 .subj-row input { width: 100%; border: 0; outline: 0; background: none; font-weight: 500; font-size: 13.5px; }
 .subj-row.ro { font-weight: 500; font-size: 13.5px; color: var(--ink-2); }
@@ -757,6 +772,13 @@ a.btn { text-decoration: none; }
 .pp-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .pp-head .nm { font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
 .pp-head .rl { color: var(--muted); font-size: 13px; }
+.meet-head { align-items: flex-start; }
+.pp-head .nm.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.confirm-strip { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 4px 0 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-2); background: var(--soft); }
+.confirm-strip > div:first-child { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 2px; }
+.confirm-strip b { font-weight: 550; font-size: 13.5px; }
+.confirm-strip span { font-size: 12.5px; color: var(--muted); }
+.confirm-acts { display: flex; align-items: center; gap: 6px; }
 
 /* ---------- email conversation ---------- */
 .thread-loading { color: var(--faint); font-size: 13px; padding: 8px 0; }
@@ -992,6 +1014,13 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .writing > div { display: flex; flex-direction: column; }
 .writing b { font-weight: 525; font-size: 13.5px; }
 .writing span { color: var(--muted); font-size: 12.5px; }
+/* what to tell the teammate before it writes or rewrites a draft */
+.direct { margin: 10px 0 12px; padding: 10px; border: 1px solid var(--line); border-radius: var(--r-2); background: var(--panel); }
+.direct-q { font-size: 13.5px; font-weight: 525; color: var(--ink-2); margin-bottom: 7px; }
+.direct textarea { display: block; width: 100%; min-height: 72px; resize: vertical; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); font: inherit; font-size: 13.5px; line-height: 1.45; color: var(--ink); outline: 0; }
+.direct textarea:focus { border-color: var(--faint); }
+.direct-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.direct-hint { color: var(--muted); font-size: 12px; }
 .reading { margin-top: 28px; padding: 22px; border: 1px solid var(--line); border-radius: var(--r-3); background: var(--panel); }
 .reading > b { font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
 .reading p { color: var(--muted); font-size: 13.5px; margin: 4px 0 14px; max-width: 52ch; }
