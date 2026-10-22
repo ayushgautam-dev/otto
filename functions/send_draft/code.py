@@ -41,10 +41,14 @@ class SendDraftInput(BaseModel):
     # the row. Empty means the workspace default, as before.
     account_id: str | None = None
     provider: str | None = None
-    # A document Lem prepared for this commitment, already rendered to HTML by the app.
-    # Gmail attachments need a file in Composio's own storage, which we cannot produce, so
-    # the document travels inside the email, below the note, under an "Attached" heading.
+    # A document prepared for this commitment that has no rendered file: it travels inside
+    # the email, below the note, under an "Attached" heading (the app renders the HTML).
     appendix_html: str | None = None
+    # A document that WAS rendered to a file in the workspace (an invoice or an offer letter
+    # as a PDF): its path. It goes as a real attachment, the way a person would send it.
+    # One per message; the mail connectors take a single file.
+    attachment_path: str | None = None
+    attachment_name: str | None = None
 
 
 class SendDraftResult(BaseModel):
@@ -209,6 +213,10 @@ async def send_draft(ctx: FunctionContext, data: SendDraftInput) -> SendDraftRes
     use = {"account_id": data.account_id} if (data.account_id or "").strip() else {}
     provider = (data.provider or "").strip().lower()
     via_outlook = bool(outlook_conv) or (not thread_ref and (provider == "outlook" or (not provider and _mail_is_outlook(pod))))
+    if via_outlook and (data.attachment_path or "").strip():
+        res.error = ("This mailbox cannot attach the file yet. Send it inside the email, "
+                     "or from a Gmail mailbox.")
+        return res
     if via_outlook:
         try:
             last = None
@@ -256,6 +264,10 @@ async def send_draft(ctx: FunctionContext, data: SendDraftInput) -> SendDraftRes
                 args["cc"] = cc
             if extra:
                 args["extra_recipients"] = extra
+            if (data.attachment_path or "").strip():
+                args["attachment"] = {"pod_path": data.attachment_path.strip()}
+                if (data.attachment_name or "").strip():
+                    args["attachment"]["filename"] = data.attachment_name.strip()
             pod.connectors.execute("gmail", "GMAIL_REPLY_TO_THREAD" if thread_ref else "GMAIL_SEND_EMAIL", args, **use)
         except Exception as exc:
             res.error = f"Gmail refused the message: {str(exc)[:200]}"

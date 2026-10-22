@@ -299,8 +299,8 @@ async function closeAfterSend(d: DraftRow, sent: string) {
 
 /* ---------------- a letter ---------------- */
 
-/** Sending a rendered file as a real attachment is built but not switched on: it has not been tried with a real send. */
-const FILE_ATTACHMENTS = false
+/** A document Otto rendered to a file (a PDF) goes as a real attachment, from a Gmail mailbox. */
+const FILE_ATTACHMENTS = true
 const fileOf = (d: DocRow) => (FILE_ATTACHMENTS && typeof d.file_path === 'string' && d.file_path.startsWith('/') ? d.file_path : '')
 
 function docAsHtml(d: DocRow): string {
@@ -390,6 +390,7 @@ export function Letter({ draft, onSent, docs = [], onEdit, attach: held_, onAtta
         // the first document that exists as a file goes as a real attachment; any others,
         // and documents that are only text, are written into the email
         attachment_path: filed ? fileOf(filed) : null,
+        attachment_name: filed ? fileOf(filed).split('/').pop() : null,
         appendix_html: docs.filter((d) => attach.includes(d.id) && d.id !== filed?.id).map(docAsHtml).join('<hr style="margin:24px 0">') || null,
       })
       if (!out?.sent) {
@@ -399,6 +400,10 @@ export function Letter({ draft, onSent, docs = [], onEdit, attach: held_, onAtta
       }
       await closeAfterSend({ ...draft, subject, body },
         `You ${out.mode === 'reply' ? 'replied to' : 'wrote to'} ${draft.person || to[0]}`)
+      // what went with it has gone out: it is no longer waiting in Docs or the morning brief
+      for (const d of going) {
+        try { await records.update('deliverables', d.id, { status: 'used' }) } catch { /* the send is what matters */ }
+      }
       setState('sent')
       toast(out.mode === 'reply' ? `Replied to ${draft.person || to[0]}` : `Sent to ${draft.person || to[0]}`)
       bump(); onSent?.()
@@ -446,7 +451,7 @@ export function Letter({ draft, onSent, docs = [], onEdit, attach: held_, onAtta
         <div className="attach-row">
           {docs.map((d) => attach.includes(d.id) ? (
             <span key={d.id} className="attach-f">
-              <span className={`attach-b ${artType(d)}`}>{artType(d) === 'sheet' ? 'SHEET' : artType(d) === 'deck' ? 'SLIDES' : 'DOC'}</span>
+              <span className={`attach-b ${fileOf(d) ? 'pdf' : artType(d)}`}>{fileOf(d) ? 'PDF' : artType(d) === 'sheet' ? 'SHEET' : artType(d) === 'deck' ? 'SLIDES' : 'DOC'}</span>
               <span className="attach-t">
                 <b>{d.title}</b>
                 <small>{fileOf(d) ? 'Attached as a PDF' : 'Written into the email, under your note'}</small>

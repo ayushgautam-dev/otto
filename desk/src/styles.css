@@ -1317,6 +1317,7 @@ button.book-gh:hover .book-gt { text-decoration: underline; }
 .attach-b { flex: none; font: 700 9.5px/1 var(--sans); letter-spacing: .04em; color: #fff; background: #3D5A80; border-radius: 5px; padding: 6px 5px; min-width: 38px; text-align: center; }
 .attach-b.sheet { background: #1E7A46; }
 .attach-b.deck { background: #B7811A; }
+.attach-b.pdf { background: #B3261E; }
 .attach-t { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
 .attach-t b { font-size: 13px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .attach-t small { font-size: 11.5px; color: var(--ink-3); }
