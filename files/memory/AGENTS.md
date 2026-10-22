@@ -251,6 +251,9 @@ rules that keep the data trustworthy:
 - `autoresolve_loops` — closes what the inbox shows was already handled.
 - `ingest_open_loops` — the deterministic writer for commitments. Use it rather than
   inserting into `loops` yourself; it normalises values and catches duplicates.
+  The obligation is a row title: at most ten words and about 60 characters, verb first,
+  naming the person. Dates, amounts and reasons go in `urgency_reason`, never in brackets
+  in the title.
 - `record_interaction` — every incoming thing lands here first.
 - `find_free_slots` — real free time from the calendar. Never invent a time.
 - `render_brief` — lays the morning brief out as its email. You give it the facts; it

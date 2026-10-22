@@ -129,9 +129,47 @@ export function Loading({ rows = 3 }: { rows?: number }) {
    Deliberately small: headings, lists, tables, bold/italic/code and links.
    Documents render through this, so it has to look like a document — never
    like raw markdown leaking into the page. */
+/** A fact nobody has stated yet, left as a marked blank: `[…]`, `[...]` or `[...the start date]`. */
+export const BLANK = /\[(?:\.\.\.|…)[^\]\n]*\](?!\()/g
+export const countBlanks = (text?: string | null) => (String(text ?? '').match(BLANK) ?? []).length
+
+/** Inside a prepared document that can be filled in place: a blank is a button that turns
+ *  into a field. `fill` gets the blank's place among all blanks on the page, in reading order. */
+export const BlankCtx = createContext<{ fill?: (index: number, value: string) => void }>({})
+
+function Blank({ text }: { text: string }) {
+  const { fill } = useContext(BlankCtx)
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState('')
+  const ref = useRef<HTMLElement | null>(null)
+  const hint = text.slice(1, -1).replace(/^(\.\.\.|…)\s*/, '').trim()
+  if (!fill) return <mark className="blank">{hint ? `[${hint}]` : '[…]'}</mark>
+  const place = () => {
+    const page = ref.current?.closest('[data-blanks]')
+    return page ? [...page.querySelectorAll('.blank')].indexOf(ref.current as Element) : -1
+  }
+  if (editing) {
+    return (
+      <input ref={(el) => { ref.current = el }} className="blank blank-in" autoFocus value={value}
+        placeholder={hint || 'Type it in'} aria-label={hint || 'Fill the blank'}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.stopPropagation(); setEditing(false) }
+          if (e.key === 'Enter' && value.trim()) { const i = place(); setEditing(false); if (i >= 0) fill(i, value.trim()) }
+        }}
+        onBlur={() => setEditing(false)} />
+    )
+  }
+  return (
+    <button ref={(el) => { ref.current = el }} className="blank" title="Fill this in" onClick={() => setEditing(true)}>
+      {hint ? `[${hint}]` : '[…]'}
+    </button>
+  )
+}
+
 function inline(text: string, keyBase: string): ReactNode[] {
   const out: ReactNode[] = []
-  const re = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[[^\]]+\]\((?:[^()\s]|\([^()\s]*\))+\))/g
+  const re = /(\[(?:\.\.\.|…)[^\]\n]*\](?!\()|\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[[^\]]+\]\((?:[^()\s]|\([^()\s]*\))+\))/g
   let last = 0
   let m: RegExpExecArray | null
   let i = 0
@@ -139,7 +177,8 @@ function inline(text: string, keyBase: string): ReactNode[] {
     if (m.index > last) out.push(text.slice(last, m.index))
     const tok = m[0]
     const k = `${keyBase}-${i++}`
-    if (tok.startsWith('**')) out.push(<strong key={k}>{tok.slice(2, -2)}</strong>)
+    if (/^\[(\.\.\.|…)/.test(tok) && !tok.endsWith(')')) out.push(<Blank key={k} text={tok} />)
+    else if (tok.startsWith('**')) out.push(<strong key={k}>{inline(tok.slice(2, -2), k)}</strong>)
     else if (tok.startsWith('`')) out.push(<code key={k}>{tok.slice(1, -1)}</code>)
     else if (tok.startsWith('[')) {
       const mm = /\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/.exec(tok)!
@@ -156,7 +195,9 @@ export function Inline({ text }: { text: string }) {
   return <>{inline(text, 'i')}</>
 }
 
-export function Markdown({ text }: { text: string }) {
+/** `breaks`: every line stays its own line, as in a document's address block or an invoice's
+ *  header, instead of running on into one paragraph. */
+export function Markdown({ text, breaks }: { text: string; breaks?: boolean }) {
   const nodes = useMemo(() => {
     const lines = (text || '').replace(/\r/g, '').split('\n')
     const out: ReactNode[] = []
@@ -167,7 +208,10 @@ export function Markdown({ text }: { text: string }) {
 
     const flushPara = () => {
       if (!para.length) return
-      out.push(<p key={`p${k++}`}>{inline(para.join(' '), `p${k}`)}</p>)
+      const key = k++
+      out.push(<p key={`p${key}`}>{breaks
+        ? para.flatMap((l, i) => (i ? [<br key={`b${i}`} />, ...inline(l, `p${key}-${i}`)] : inline(l, `p${key}-${i}`)))
+        : inline(para.join(' '), `p${key}`)}</p>)
       para = []
     }
     const flushList = () => {
@@ -233,7 +277,7 @@ export function Markdown({ text }: { text: string }) {
     }
     flushAll()
     return out
-  }, [text])
+  }, [text, breaks])
 
   return <div className="md">{nodes}</div>
 }

@@ -21,7 +21,7 @@ const PAGES: { id: string; label: string; icon: typeof Sun }[] = [
 ]
 
 export function CommandPalette({ onAsk }: { onAsk: (text: string) => void }) {
-  const { open: openFocus, navigate, version } = useNav()
+  const { open: openFocus, navigate, version, view } = useNav()
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const [i, setI] = useState(0)
@@ -66,7 +66,7 @@ export function CommandPalette({ onAsk }: { onAsk: (text: string) => void }) {
     if (h.kind === 'page') navigate(h.id)
     else if (h.kind === 'person') openFocus({ type: 'person', id: h.id })
     else if (h.kind === 'company') openFocus({ type: 'company', id: h.id })
-    else if (h.kind === 'doc') openFocus({ type: 'doc', id: h.id })
+    else if (h.kind === 'doc') view(h.id)
     else openFocus({ type: 'workstream', id: h.id })
   }
   const askRow = hits.length

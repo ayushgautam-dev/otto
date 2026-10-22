@@ -8,6 +8,7 @@ import { useSql, rev, firstName } from './lib'
 import { ToastProvider, Avatar } from './ui'
 import { NavProvider, useNav } from './nav'
 import { FocusPanel } from './focus'
+import { Viewer } from './artifacts'
 import { LemProvider, LemDock, useLem } from './lem'
 import { CommandPalette } from './cmdk'
 import { useRowKeys } from './items'
@@ -127,6 +128,7 @@ function Shell({ name, email }: { name: string; email: string }) {
         <LemDock />
       </main>
       <FocusPanel />
+      <Viewer />
       <CommandPalette onAsk={(t) => lem.ask(t)} />
     </div>
   )

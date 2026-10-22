@@ -56,10 +56,52 @@ class SendDraftResult(BaseModel):
     error: str = ""
 
 
+_BULLET = re.compile(r"^\s*[-*•]\s+(.*)$")
+_NUMBERED = re.compile(r"^\s*\d+[.)]\s+(.*)$")
+
+
+def _inline(line: str) -> str:
+    # markdown emphasis that slipped into an email becomes real bold, never stray stars
+    return re.sub(r"\*\*(.+?)\*\*|__(.+?)__", lambda m: "<b>" + (m.group(1) or m.group(2)) + "</b>", line)
+
+
 def _to_html(text: str) -> str:
+    """Plain text to email HTML: paragraphs, and runs of "- " or "1. " lines as real lists."""
     safe = html.escape(text or "").strip()
-    paras = [p.strip() for p in re.split(r"\n\s*\n", safe) if p.strip()]
-    return "".join("<p>" + p.replace("\n", "<br>") + "</p>" for p in paras) or "<p></p>"
+    out = []
+    for para in re.split(r"\n\s*\n", safe):
+        lines = [ln for ln in para.split("\n") if ln.strip()]
+        run: list[str] = []
+        run_tag = ""
+        text_lines: list[str] = []
+
+        def flush_text():
+            if text_lines:
+                out.append("<p>" + "<br>".join(_inline(ln.strip()) for ln in text_lines) + "</p>")
+                text_lines.clear()
+
+        def flush_run():
+            nonlocal run_tag
+            if run:
+                out.append(f"<{run_tag}>" + "".join(f"<li>{_inline(x)}</li>" for x in run) + f"</{run_tag}>")
+                run.clear()
+            run_tag = ""
+
+        for ln in lines:
+            b, n = _BULLET.match(ln), _NUMBERED.match(ln)
+            if b or n:
+                tag = "ul" if b else "ol"
+                flush_text()
+                if run_tag and run_tag != tag:
+                    flush_run()
+                run_tag = tag
+                run.append((b or n).group(1).strip())
+            else:
+                flush_run()
+                text_lines.append(ln)
+        flush_run()
+        flush_text()
+    return "".join(out) or "<p></p>"
 
 
 def _emails(xs: list[str] | None) -> list[str]:

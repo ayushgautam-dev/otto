@@ -242,6 +242,17 @@ _STOP = {
 }
 
 
+def _title_note(obligation: str | None) -> str | None:
+    """The obligation is a row title people scan: ten words, about 60 characters. A longer
+    one is still saved — cutting it would lose what is owed — but the writer is told, so it
+    can send the short version as a `moved` change with the details in urgency_reason."""
+    t = (obligation or "").strip()
+    if len(t) <= 70 and len(t.split()) <= 12 and not re.search(r"[(;]| [—–] ", t):
+        return None
+    return (f"title too long ({len(t)} characters): '{t[:60]}…' — send it again as a moved change "
+            f"with an obligation of at most ten words; dates, amounts and reasons go in urgency_reason")
+
+
 def _fingerprint(text: str) -> frozenset[str]:
     """Content words of an obligation, for spotting the same thing said twice."""
     words = re.findall(r"[a-z0-9₹]+", (text or "").lower())
@@ -507,6 +518,9 @@ async def ingest_open_loops(ctx: FunctionContext, data: IngestInput) -> IngestRe
                 patch["opened_at"] = ch.happened_at or now_iso
             if ch.obligation and ch.obligation.strip():
                 patch["obligation"] = ch.obligation.strip()
+                long_title = _title_note(patch["obligation"])
+                if long_title:
+                    res.notes.append(long_title)
             kind = (ch.kind or "").strip().lower()
             if kind in _SIDE_BY_KIND:
                 patch["kind"] = kind
@@ -637,6 +651,9 @@ async def ingest_open_loops(ctx: FunctionContext, data: IngestInput) -> IngestRe
         existing_loops.add(key)
         open_by_person.setdefault(pid, []).append(fp)
         res.loops_created += 1
+        long_title = _title_note(l.obligation)
+        if long_title:
+            res.notes.append(f"{long_title} (loop {loop_row['id']})")
         # optional draft attached to this loop
         if l.draft_body:
             pod.table("drafts").create({

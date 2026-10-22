@@ -17,6 +17,7 @@ import { useTeammate, tm } from '../teammate'
 import { turnOnByKey } from '../autopilot-sync'
 import { useAccounts, accountLabel, resolveAccount } from '../accounts'
 import { asChoices } from '../choices'
+import { plainEmail } from '../prepared'
 
 /* Today — read once, top to bottom, then get on with the day.
 
@@ -173,7 +174,7 @@ function ReadyShelf() {
     return r.side === 'them' ? `Nudge ${who}` : `Reply to ${who}`
   }
   const icon = (r: Ready) => Number(r.docs) > 0 ? <FileText size={12} /> : r.kind === 'meeting' ? <CalendarPlus size={12} /> : <Send size={12} />
-  const preview = (r: Ready) => String(r.body ?? '').replace(/^(hi|hey|hello|dear)\s+[^,\n]+,?\s*/i, '').replace(/\s+/g, ' ').trim()
+  const preview = (r: Ready) => plainEmail(String(r.body ?? '')).replace(/^(hi|hey|hello|dear)\s+[^,\n]+,?\s*/i, '').replace(/\s+/g, ' ').trim()
   return (
     <section className="shelf">
       <div className="sec-h"><Orb size={14} /> Ready for you <span className="muted">{q.items.length + briefs.items.length}</span></div>

@@ -11,7 +11,8 @@ import { useNav, focusKey, InFocus, type Focus } from './nav'
 import { ItemList, Glyph } from './items'
 import { CloseBar } from './closing'
 import { Conversation } from './thread'
-import { Prepared, Paper, LemNote, draftForLoop, useDocsForLoop, type DraftRow } from './prepared'
+import { Prepared, LemNote, draftForLoop, useDocsForLoop, type DraftRow } from './prepared'
+import { ArtCard, ArtBody, ART_SELECT, type ArtRow } from './artifacts'
 import { useLem } from './lem'
 import { tm } from './teammate'
 import { asChoices } from './choices'
@@ -64,7 +65,7 @@ function SourceIcon({ l }: { l: LoopRow }) {
 }
 
 function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
-  const { version, bump, closeTab, push } = useNav()
+  const { version, bump, closeTab, push, view } = useNav()
   const lem = useLem()
   const q = useSql<LoopFull>(rev(
     `select l.id, l.side, l.kind, l.status, l.obligation, l.provenance, l.urgency_reason, l.thread_ref,
@@ -82,6 +83,19 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
   const [say, setSay] = useState<{ redo: boolean; text: string } | null>(null)
   const leave = () => { bump(); closeTab(focusKey(f)) }
   const key = `loop:${f.id}`
+  /* Which prepared documents go with the reply. Kept here so a card's "Add to reply" and the
+     letter's attachment row are one choice; a document made since joins it. */
+  const docIds = docs.items.map((d) => d.id)
+  const [attach, setAttach] = useState<string[] | null>(null)
+  const seenDocs = useRef<string>('')
+  useEffect(() => {
+    const k = docIds.join(',')
+    if (seenDocs.current === k) return
+    const before = seenDocs.current ? seenDocs.current.split(',') : []
+    seenDocs.current = k
+    setAttach((a) => (a === null ? docIds : [...a.filter((x) => docIds.includes(x)), ...docIds.filter((x) => !before.includes(x))]))
+  }, [docIds.join(',')])
+  const going = attach ?? docIds
 
   // A nudge starts as a real pending draft on the same conversation — the same write as before.
   async function startNudge() {
@@ -174,8 +188,18 @@ function ItemFocus({ f }: { f: Extract<Focus, { type: 'loop' }> }) {
           <div className="prepared">
             <div className="prepared-h"><Orb size={14} /> {tm()} prepared</div>
             {draft && <LemNote text={draft.note} />}
-            {draft && <Prepared draft={draft} docs={docs.items} onSent={leave} onDirect={(t) => lemWrite(t)} />}
-            {docs.items.map((d) => <Paper key={d.id} doc={d} />)}
+            {docs.items.length > 0 && (
+              <div className={`art-grid n${docs.items.length}`}>
+                {docs.items.map((d) => (
+                  <ArtCard key={d.id} d={d} onOpen={() => view(d.id, docIds)}
+                    attach={draft && (draft.kind ?? '') !== 'meeting'
+                      ? { on: going.includes(d.id), toggle: () => setAttach(going.includes(d.id) ? going.filter((x) => x !== d.id) : [...going, d.id]) }
+                      : null} />
+                ))}
+              </div>
+            )}
+            {draft && <Prepared draft={draft} docs={docs.items} onSent={leave} onDirect={(t) => lemWrite(t)}
+              attach={going} onAttach={setAttach} />}
           </div>
         ) : (
           <div className="unprepared">
@@ -316,7 +340,7 @@ function StoryView({ items, stands }: { items: Story[]; stands?: string | null }
 type PTab = 'open' | 'story' | 'docs' | 'about'
 
 function PersonFocus({ f }: { f: Extract<Focus, { type: 'person' }> }) {
-  const { version, bump, push } = useNav()
+  const { version, bump, push, view: viewArt } = useNav()
   const lem = useLem()
   const [view, setView] = useState<PTab>('open')
   const id = f.id
@@ -388,7 +412,7 @@ function PersonFocus({ f }: { f: Extract<Focus, { type: 'person' }> }) {
         {view === 'docs' && (docs.isLoading ? <Loading />
           : docs.items.length === 0 ? <Empty line="Nothing written about them yet." />
             : <div className="doclist">{docs.items.map((d) => (
-              <button key={d.id} className="docrow" onClick={() => push({ type: 'doc', id: d.id })}>
+              <button key={d.id} className="docrow" onClick={() => viewArt(d.id)}>
                 <span className="docrow-t">{d.title}</span><span className="muted">{fmtDate(d.created_at)}</span>
               </button>))}</div>)}
         {view === 'about' && (p?.research || p?.context
@@ -721,13 +745,17 @@ function MeetingFocus({ f }: { f: Extract<Focus, { type: 'meeting' }> }) {
 /* ---------------- a document ---------------- */
 
 function DocFocus({ f }: { f: Extract<Focus, { type: 'doc' }> }) {
-  const { version } = useNav()
-  const q = useSql<{ id: string; title: string; body: string; doc_url?: string; created_at?: string }>(rev(
-    `select id, title, body, doc_url, created_at from deliverables where id=${lit(f.id)} limit 1`, version))
+  const { version, view } = useNav()
+  const q = useSql<ArtRow>(rev(`${ART_SELECT} where d.id=${lit(f.id)} limit 1`, version))
   const d = q.items[0]
   if (q.isLoading && !d) return <div className="focus-body"><Loading rows={6} /></div>
   if (!d) return <div className="focus-body"><Empty line="Not found." /></div>
-  return <div className="focus-body paperbg"><Paper doc={d} reader /></div>
+  return (
+    <div className="focus-body paperbg doc-tab">
+      <div className="doc-tab-top"><button className="btn line sm" onClick={() => view(d.id)}><Maximize2 size={13} /> Full view</button></div>
+      <ArtBody d={d} />
+    </div>
+  )
 }
 
 /* ---------------- the panel ---------------- */

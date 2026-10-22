@@ -438,6 +438,119 @@ function scopeFor(t: { scope_key: string; title: string }): ChatScope {
   return { ...HOME, key: k, title: t.title || '' }
 }
 
+/* ---------------- talking about one document ---------------- */
+
+/* Beside a document, sheet or deck in the viewer: its own conversation, kept like any other
+   (scope `doc:<id>`), so what was asked and what the teammate changed stays readable. A
+   passage selected on the page rides along as a quote; selecting another replaces it. */
+export function DocChat({ id, title, what, quote, onClearQuote, starters }: {
+  id: string; title: string; what: string
+  quote: string | null; onClearQuote: () => void; starters: string[]
+}) {
+  const scope = useMemo<ChatScope>(() => ({ key: `doc:${id}`, title, about: `the ${what} "${title}" (deliverable ${id})` }), [id, title, what])
+  const { bump } = useNav()
+  const [convId, setConvId] = useState<string | null>(null)
+  const [booting, setBooting] = useState(true)
+  const [draft, setDraft] = useState('')
+  const logRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    let live = true
+    setBooting(true); setConvId(null)
+    rememberedConversation(scope.key)
+      .then((c) => { if (live) { setConvId(c); setBooting(false) } })
+      .catch(() => { if (live) setBooting(false) })
+    return () => { live = false }
+  }, [scope.key])
+  useEffect(() => { if (quote) inputRef.current?.focus() }, [quote])
+
+  const instructions = useMemo(() => instructionsFor(scope.about), [scope.about])
+  const thread = useConversationMessages({ client, agentName: 'pod_default', conversationId: convId, instructions, autoResume: true })
+  const running = thread.isStreaming || thread.isRunning
+  // when a change lands, the page beside it shows the new version
+  const was = useRef(false)
+  useEffect(() => { if (running) { was.current = true; return } if (was.current) { was.current = false; bump() } }, [running])
+  useEffect(() => {
+    const t = window.setInterval(() => { if (running) bump() }, 5000)
+    return () => window.clearInterval(t)
+  }, [running])
+
+  const turns = toTurns(thread.messages as Msg[])
+  useEffect(() => { const el = logRef.current; if (el) el.scrollTop = el.scrollHeight }, [turns.length, thread.streamingText, turns[turns.length - 1]?.steps.length])
+
+  async function send(text = draft.trim()) {
+    if (!text || running) return
+    setDraft('')
+    if (inputRef.current) inputRef.current.style.height = 'auto'
+    const part = quote ? `, the part that says "${quote.replace(/"/g, "'")}"` : ''
+    onClearQuote()
+    const msg = `About the ${what} "${title}" (deliverable ${id})${part}: ${text}\n\n`
+      + `If this asks for a change, update that deliverables row in place, keep everything else as it is, and say in one line what you changed.`
+    try {
+      let c = convId
+      if (!c) { const made = await client.conversations.createForAgent('pod_default') as { id: string }; c = made.id; setConvId(c) }
+      void remember(scope.key, c, title)
+      await thread.sendMessage(msg, { conversationId: c })
+    } catch (err) { console.error(`${tm()} could not take that`, err) }
+  }
+
+  return (
+    <div className="dchat">
+      <div className="dchat-log" ref={logRef}>
+        {!booting && turns.length === 0 && !running && (
+          <div className="dchat-empty">
+            <p>Ask about any part, or say what should change. {tm()} edits the {what} in place.</p>
+            <div className="dchat-starters">
+              {starters.map((s) => (
+                <button key={s} className="dchat-starter" onClick={() => void send(s)}>
+                  <span>{s}</span><ArrowUp size={13} />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {turns.map((t, i) => {
+          const live = i === turns.length - 1 && running
+          return (
+            <Fragment key={i}>
+              {t.user && <div className="said me"><div className="bubble">{t.user}</div></div>}
+              <div className="said lem-said">
+                {live && !thread.streamingText && <div className="step"><Orb live size={13} /> {(t.steps[t.steps.length - 1] ?? 'Working on it')}…</div>}
+                {t.replies.map((r, j) => <div key={j} className="lem-text"><Reply text={r} /></div>)}
+                {live && thread.streamingText && <div className="lem-text"><Reply text={thread.streamingText} /></div>}
+              </div>
+            </Fragment>
+          )
+        })}
+        {running && turns.length === 0 && <div className="said lem-said"><div className="step"><Orb live size={13} /> Working on it…</div></div>}
+        {thread.error && !running && <div className="chat-err">{tm()} stopped before finishing. Ask again, or put it differently.</div>}
+      </div>
+      <div className="dchat-box">
+        {quote && (
+          <div className="dchat-quote">
+            <span className="dchat-quote-t">{quote}</span>
+            <button className="icon-btn" aria-label="Don’t ask about this part" onClick={onClearQuote}><X size={13} /></button>
+          </div>
+        )}
+        <div className="dchat-row">
+          <textarea ref={inputRef} rows={1} value={draft}
+            placeholder={running ? `${tm()} is on it…` : quote ? 'What about this part?' : `Ask ${tm()} about the ${what}…`}
+            onChange={(e) => {
+              setDraft(e.target.value)
+              e.target.style.height = 'auto'
+              e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`
+            }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send() } }} />
+          {running
+            ? <button className="go stop" onClick={() => void thread.stop(convId)} title="Stop"><Square size={10} fill="currentColor" /></button>
+            : <button className="go" disabled={!draft.trim()} onClick={() => void send()} title="Send"><ArrowUp size={15} strokeWidth={2.4} /></button>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /* ---------------- the conversation ---------------- */
 
 type Msg = {
@@ -471,6 +584,8 @@ function stepLabel(m: Msg): string | null {
 /* What a pane's buttons send is written for the teammate, not to be read back. In the
    conversation it shows as the one line the person actually asked for. */
 function asSaid(t: string): string {
+  const doc = t.match(/^About the [^"]+ "[\s\S]*?" \(deliverable [^)]+\)(?:, the part that says "([\s\S]*?)")?: ([\s\S]*?)\n\nIf this asks for a change/)
+  if (doc) return doc[1] ? `On “${doc[1].length > 80 ? `${doc[1].slice(0, 80)}…` : doc[1]}”: ${doc[2]}` : doc[2]
   const said = t.match(/ My direction: "([\s\S]*)"\. End with the card marker\.$/)?.[1]
   const tail = said ? `: “${said}”` : ''
   let m = t.match(/^Write a short nudge to (.+?) about "[\s\S]*End with the card marker\.$/)

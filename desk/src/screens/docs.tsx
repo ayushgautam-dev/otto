@@ -4,24 +4,28 @@ import { useSql, rev, fmtDate } from '../lib'
 import { Empty, Loading } from '../ui'
 import { useNav } from '../nav'
 import { tm } from '../teammate'
+import { ArtCard, artType, type ArtRow, type ArtType } from '../artifacts'
 
 /* Everything Lem wrote, shelved where it belongs: under the workstream, company or person
-   it came out of, and only then by kind. Each document is a small page you can pick up. */
+   it came out of, and only then by kind. Each one is drawn as itself — a page, a sheet, a
+   deck — and opens full size in the viewer. */
 
-interface Doc {
-  id: string; title: string; created_at: string; kind: string; status: string
-  bucket: string; bucket_kind: 'workstream' | 'company' | 'person' | 'kind'; excerpt: string
-  [k: string]: unknown
+interface Doc extends ArtRow {
+  created_at: string; kind: string; status: string
+  bucket: string; bucket_kind: 'workstream' | 'company' | 'person' | 'kind'
 }
 
 const KIND_FOLDER: Record<string, string> = {
   research: 'Research', brief: 'Briefs', meeting: 'Meeting notes', notes: 'Meeting notes', summary: 'Summaries',
 }
 
+// the body is cut for the thumbnail; its blanks are counted on the whole of it
 const DOCS_SQL = `
-  select d.id, d.title, d.created_at,
+  select d.id, d.title, d.created_at, d.format, d.doc_url, d.file_path, d.loop_id,
          coalesce(d.kind,'') as kind, coalesce(d.status,'') as status,
-         left(coalesce(d.body,''), 220) as excerpt,
+         left(coalesce(d.body,''), 2400) as body,
+         (select count(*) from regexp_matches(coalesce(d.body,''), '\\[(\\.\\.\\.|…)[^\\]\\n]*\\](?!\\()', 'g')) as blanks,
+         coalesce(p.name, '') as person, coalesce(c.name, '') as company,
          coalesce(w.title, c.name, p.name, '') as bucket,
          case when w.title is not null then 'workstream'
               when c.name  is not null then 'company'
@@ -29,26 +33,35 @@ const DOCS_SQL = `
               else 'kind' end as bucket_kind
   from deliverables d
   left join tasks t         on t.id = d.task_id
-  left join loops l         on l.id = t.loop_id
+  left join loops l         on l.id = coalesce(d.loop_id, t.loop_id)
   left join work_projects w on w.id = l.work_project_id
-  left join companies c     on c.id = t.company_id
-  left join people p        on p.id = t.person_id
+  left join people p        on p.id = coalesce(t.person_id, l.person_id)
+  left join companies c     on c.id = coalesce(t.company_id, p.company_id)
   order by d.created_at desc
   limit 300`
 
 const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
-const plain = (md: string) => md.replace(/^#+\s.*$/gm, '').replace(/[*_`>#|-]/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/\s+/g, ' ').trim()
+const TYPES: { t: ArtType | 'all'; label: string }[] = [
+  { t: 'all', label: 'All' }, { t: 'doc', label: 'Documents' }, { t: 'sheet', label: 'Sheets' }, { t: 'deck', label: 'Decks' },
+]
 
 export function Docs() {
-  const { version, open } = useNav()
+  const { version, view } = useNav()
   const rows = useSql<Doc>(rev(DOCS_SQL, version))
   const [q, setQ] = useState('')
+  const [type, setType] = useState<ArtType | 'all'>('all')
   const needle = q.trim().toLowerCase()
+  const counts = useMemo(() => {
+    const c: Record<string, number> = { all: rows.items.length }
+    for (const d of rows.items) c[artType(d)] = (c[artType(d)] ?? 0) + 1
+    return c
+  }, [rows.items])
 
   const shelves = useMemo(() => {
     const by = new Map<string, Doc[]>()
     for (const d of rows.items) {
-      if (needle && !`${d.title} ${d.bucket} ${d.excerpt}`.toLowerCase().includes(needle)) continue
+      if (type !== 'all' && artType(d) !== type) continue
+      if (needle && !`${d.title} ${d.bucket} ${d.body ?? ''}`.toLowerCase().includes(needle)) continue
       const name = d.bucket_kind === 'kind'
         ? (KIND_FOLDER[d.kind] ?? (d.kind ? titleCase(d.kind) : 'Everything else'))
         : d.bucket
@@ -61,33 +74,43 @@ export function Docs() {
       const fallback = (e: [string, Doc[]]) => (e[1][0].bucket_kind === 'kind' ? 1 : 0)
       return fallback(a) - fallback(b) || b[1].length - a[1].length
     })
-  }, [rows.items, needle])
+  }, [rows.items, needle, type])
+
+  // the type switch shows only once there is more than one kind of thing to tell apart
+  const kinds = TYPES.filter((x) => x.t === 'all' || counts[x.t])
 
   return (
     <div className="page">
       <header className="page-h">
         <h1 className="display sm">Docs</h1>
-        <span className="muted">{rows.items.length} written</span>
+        <span className="muted">{rows.items.length} prepared</span>
       </header>
-      {rows.items.length > 6 && (
+      {(rows.items.length > 6 || kinds.length > 2) && (
         <div className="toolbar">
-          <label className="search"><Search size={14} /><input placeholder={`Search what ${tm()} wrote…`} value={q} onChange={(e) => setQ(e.target.value)} /></label>
+          {kinds.length > 2 && (
+            <div className="seg sm" role="tablist" aria-label="Kind">
+              {kinds.map((x) => (
+                <button key={x.t} role="tab" aria-selected={type === x.t} className={type === x.t ? 'on' : ''} onClick={() => setType(x.t)}>
+                  {x.label} <span>{counts[x.t]}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {rows.items.length > 6 && (
+            <label className="search"><Search size={14} /><input placeholder={`Search what ${tm()} prepared…`} value={q} onChange={(e) => setQ(e.target.value)} /></label>
+          )}
         </div>
       )}
       {rows.isLoading ? <Loading rows={4} />
-        : rows.items.length === 0 ? <Empty line={`${tm()} hasn’t written anything yet.`} />
+        : rows.items.length === 0 ? <Empty line={`${tm()} hasn’t prepared anything yet.`} />
           : shelves.length === 0 ? <Empty line="Nothing matches that." />
             : shelves.map(([name, docs]) => (
               <section key={name} className="shelf-sec">
                 <div className="sec-h">{name} <span className="muted">{docs.length}</span></div>
-                <div className="pages">
+                <div className="art-shelf">
                   {docs.map((d) => (
-                    <button key={d.id} className="page-card" onClick={() => open({ type: 'doc', id: d.id })}>
-                      <span className="pc-kind">{d.kind ? titleCase(d.kind) : 'Document'}</span>
-                      <span className="pc-title">{d.title}</span>
-                      <span className="pc-ex">{plain(d.excerpt)}</span>
-                      <span className="pc-date">{fmtDate(d.created_at)}</span>
-                    </button>
+                    <ArtCard key={d.id} d={d} onOpen={() => view(d.id)}
+                      sub={[d.bucket_kind === 'person' || d.bucket_kind === 'kind' ? '' : d.person, fmtDate(d.created_at)].filter(Boolean).join(' · ')} />
                   ))}
                 </div>
               </section>

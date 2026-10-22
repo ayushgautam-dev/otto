@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { X, Plus, Download, Copy, ExternalLink, FileText, CalendarPlus, Send, Check, Video, Clock, ArrowDownUp } from 'lucide-react'
+import { X, Plus, FileText, CalendarPlus, Send, Check, Video, Clock, ArrowDownUp } from 'lucide-react'
 import { useCurrentUser } from 'lemma-sdk/react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { useSql, records, runFn, rev, lit, isGmailThread, isOutlookThread, client } from './lib'
 import { useAccounts, useThreadAccount, accountLabel } from './accounts'
-import { Avatar, Markdown, Orb, useToast } from './ui'
+import { Avatar, Markdown, Orb, useToast, countBlanks } from './ui'
+import { ART_SELECT, artType, kindLabel, type ArtRow } from './artifacts'
 import { useNav } from './nav'
 import { tm } from './teammate'
 import { asChoices, choose, type Choices } from './choices'
@@ -37,19 +38,8 @@ export interface DraftRow {
   [k: string]: unknown
 }
 
-export interface DocRow {
-  id: string
-  title: string
-  body?: string | null
-  doc_url?: string | null
-  /** where the rendered file is, when the document was made as one (a PDF) */
-  file_path?: string | null
-  format?: string | null
-  status?: string | null
-  created_at?: string | null
-  loop_id?: string | null
-  [k: string]: unknown
-}
+/** A document, sheet or deck prepared with the draft (see artifacts.tsx). */
+export type DocRow = ArtRow
 
 interface Slot { start: string; end?: string }
 interface Meeting { title?: string; duration_min?: number; attendees?: string[]; location?: string; slots?: Slot[] }
@@ -84,6 +74,20 @@ export function asMeeting(v: unknown): Meeting | null {
 }
 
 const isEmail = (s: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.trim())
+
+/** An email is plain text. Markdown the writer slipped in (bold stars, # headings, [links](…))
+ *  would reach the other person as literal symbols, so it is taken out before it is shown:
+ *  a heading becomes its own line, a link its words and address. "- " lists stay, and the
+ *  send turns them into real bullets. */
+export function plainEmail(text: string): string {
+  return (text || '')
+    .replace(/\r/g, '')
+    .replace(/^#{1,6}\s+(.+?)\s*#*$/gm, '$1')
+    .replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_, a, b) => a ?? b)
+    .replace(/(^|[\s(])\*(\S(?:.*?\S)?)\*(?=[\s).,;:!?]|$)/gm, '$1$2')
+    .replace(/^(\s*)[*+•]\s+/gm, '$1- ')
+    .replace(/\[([^\]\n]+)\]\((https?:[^)\s]+)\)/g, (_, t, u) => (t === u ? u : `${t} (${u})`))
+}
 
 function usePeopleByEmail(emails: string[]) {
   const key = emails.map((e) => e.toLowerCase()).sort().join(',')
@@ -295,33 +299,22 @@ async function closeAfterSend(d: DraftRow, sent: string) {
 
 /* ---------------- a letter ---------------- */
 
-/** A document that was rendered to a file (an invoice as a PDF) opens as that file. */
-async function openFile(path: string, toast: (m: string) => void) {
-  const win = window.open('', '_blank')
-  try {
-    const blob = await (client as unknown as { files: { download: (p: string) => Promise<Blob> } }).files.download(path)
-    const url = URL.createObjectURL(blob)
-    if (win) win.location.href = url
-    else { const a = document.createElement('a'); a.href = url; a.download = path.split('/').pop() || 'document'; a.click() }
-  } catch {
-    win?.close()
-    toast('Could not open the file')
-  }
-}
 /** Sending a rendered file as a real attachment is built but not switched on: it has not been tried with a real send. */
 const FILE_ATTACHMENTS = false
 const fileOf = (d: DocRow) => (FILE_ATTACHMENTS && typeof d.file_path === 'string' && d.file_path.startsWith('/') ? d.file_path : '')
 
 function docAsHtml(d: DocRow): string {
   const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;')
-  const inner = renderToStaticMarkup(<Markdown text={d.body ?? ''} />)
+  const inner = renderToStaticMarkup(<Markdown text={d.body ?? ''} breaks />)
   const link = d.doc_url ? `<p><a href="${esc(d.doc_url)}">Open in Google Docs</a></p>` : ''
   return `<p style="color:#777;font-size:12px;letter-spacing:.04em;text-transform:uppercase;margin:0 0 6px">Attached</p>`
     + `<h2 style="font-size:18px;margin:0 0 12px">${esc(d.title)}</h2>${link}${inner}`
 }
 
-export function Letter({ draft, onSent, docs = [], onEdit }: {
+export function Letter({ draft, onSent, docs = [], onEdit, attach: held_, onAttach }: {
   draft: DraftRow; onSent?: () => void; docs?: DocRow[]
+  /** which documents go with it, when the pane around it keeps that (its cards toggle it too) */
+  attach?: string[]; onAttach?: (ids: string[]) => void
   /** told of every change to the subject and text (the choices keep each version's edits) */
   onEdit?: (subject: string, body: string) => void
 }) {
@@ -332,11 +325,17 @@ export function Letter({ draft, onSent, docs = [], onEdit }: {
   const [cc, setCc] = useState<string[]>(asList(draft.cc_emails))
   const [showCc, setShowCc] = useState(asList(draft.cc_emails).length > 0)
   const [subject, setSubject] = useState(draft.subject ?? '')
-  const [body, setBody] = useState(draft.body ?? '')
+  const [body, setBody] = useState(plainEmail(draft.body ?? ''))
   const [state, setState] = useState<'idle' | 'sending' | 'sent'>(draft.status === 'sent' ? 'sent' : 'idle')
   const held = useHeldSend()
-  const [attach, setAttach] = useState<string[]>(docs.map((d) => d.id))
-  useEffect(() => { setAttach(docs.map((d) => d.id)) }, [docs.map((d) => d.id).join(',')])
+  const [own, setOwn] = useState<string[]>(docs.map((d) => d.id))
+  useEffect(() => { if (!held_) setOwn(docs.map((d) => d.id)) }, [docs.map((d) => d.id).join(',')])
+  const attach = held_ ?? own
+  const setAttach = (f: (a: string[]) => string[]) => { const next = f(attach); if (onAttach) onAttach(next); else setOwn(next) }
+  // nothing leaves with a blank still in it: the email's own, or a document going with it
+  const going = docs.filter((d) => attach.includes(d.id))
+  const blanks = countBlanks(body) + going.reduce((n, d) => n + countBlanks(d.body), 0)
+  const blankWhere = [countBlanks(body) ? 'the email' : '', ...going.filter((d) => countBlanks(d.body)).map((d) => `the ${kindLabel(d).toLowerCase()}`)].filter(Boolean)
   const area = useRef<HTMLTextAreaElement>(null)
   const isReply = isGmailThread(draft.thread_ref)
   /* Which mailbox it leaves from. A reply goes from the mailbox its conversation is in;
@@ -363,7 +362,7 @@ export function Letter({ draft, onSent, docs = [], onEdit }: {
     if (seen.current === stored) return
     seen.current = stored
     setSubject(draft.subject ?? '')
-    setBody(draft.body ?? '')
+    setBody(plainEmail(draft.body ?? ''))
     const t = asList(draft.to_emails)
     if (t.length) setTo(t)
     const c = asList(draft.cc_emails)
@@ -446,21 +445,30 @@ export function Letter({ draft, onSent, docs = [], onEdit }: {
       {docs.length > 0 && (
         <div className="attach-row">
           {docs.map((d) => attach.includes(d.id) ? (
-            <span key={d.id} className="attach" title="Goes out inside the email, below your note">
-              <FileText size={12} /> {d.title}
-              <button aria-label="Don't include" onClick={() => setAttach((a) => a.filter((x) => x !== d.id))}><X size={11} /></button>
+            <span key={d.id} className="attach-f">
+              <span className={`attach-b ${artType(d)}`}>{artType(d) === 'sheet' ? 'SHEET' : artType(d) === 'deck' ? 'SLIDES' : 'DOC'}</span>
+              <span className="attach-t">
+                <b>{d.title}</b>
+                <small>{fileOf(d) ? 'Attached as a PDF' : 'Written into the email, under your note'}</small>
+              </span>
+              <button className="icon-btn" aria-label={`Leave out ${d.title}`} onClick={() => setAttach((a) => a.filter((x) => x !== d.id))}><X size={12} /></button>
             </span>
           ) : (
-            <button key={d.id} className="link-q" onClick={() => setAttach((a) => [...a, d.id])}>+ Include {d.title}</button>
+            <button key={d.id} className="link-q" onClick={() => setAttach((a) => [...a, d.id])}><Plus size={12} /> Include {d.title}</button>
           ))}
         </div>
+      )}
+      {blanks > 0 && (
+        <p className="blank-note">
+          {blanks === 1 ? 'One blank is' : `${blanks} blanks are`} still open in {blankWhere.join(' and ')}. Fill {blanks === 1 ? 'it' : 'them'} before sending.
+        </p>
       )}
       <div className="letter-foot">
         <button className="link-q" onClick={() => void discard()}>Discard</button>
         <span className="grow" />
         {/* somebody known by name only (a promise from a call): their address is still to come */}
         {!to.length && <span className="muted" style={{ fontSize: 12.5 }}>Add {(draft.person || '').split(' ')[0] || 'their'}{draft.person ? '’s' : ''} address above to send</span>}
-        <HeldButton held={held} disabled={state === 'sending' || !to.length || !body.trim()}
+        <HeldButton held={held} disabled={state === 'sending' || !to.length || !body.trim() || blanks > 0}
           icon={<Send size={13} />} label={state === 'sending' ? 'Sending…' : isReply ? `Send reply` : 'Send'}
           onGo={() => held.start(reallySend)} />
       </div>
@@ -565,132 +573,25 @@ export function Invitation({ draft, onSent }: { draft: DraftRow; onSent?: () => 
   )
 }
 
-/* ---------------- a document ---------------- */
-
-function download(name: string, mime: string, text: string) {
-  const blob = new Blob([text], { type: mime })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = name
-  document.body.appendChild(a); a.click(); a.remove()
-  window.setTimeout(() => URL.revokeObjectURL(a.href), 2000)
-}
-
-function asWordHtml(title: string, el: HTMLElement | null) {
-  const inner = el?.innerHTML ?? ''
-  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
-<head><meta charset="utf-8"><title>${title.replace(/</g, '&lt;')}</title>
-<style>body{font-family:Calibri,Arial,sans-serif;font-size:11pt;line-height:1.45}h1{font-size:18pt}h2{font-size:14pt}h3{font-size:12pt}table{border-collapse:collapse}td,th{border:1px solid #bbb;padding:4px 8px}</style>
-</head><body><h1>${title.replace(/</g, '&lt;')}</h1>${inner}</body></html>`
-}
-
-/** `reader` is the full-height reading view; otherwise a folded preview card. */
-export function Paper({ doc, reader }: { doc: DocRow; reader?: boolean }) {
-  const toast = useToast()
-  const { push, bump } = useNav()
-  const [open, setOpen] = useState(!!reader)
-  const [busy, setBusy] = useState(false)
-  const [url, setUrl] = useState(doc.doc_url ?? '')
-  const bodyRef = useRef<HTMLDivElement>(null)
-  // a document that repeats its own title as its first heading reads it twice
-  const body = String(doc.body ?? '').replace(/^\s*#\s+(.+)\n+/, (m, h: string) =>
-    h.trim().toLowerCase() === (doc.title || '').trim().toLowerCase() ? '' : m)
-  const safeName = (doc.title || 'document').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').slice(0, 60) || 'document'
-
-  async function toGoogle() {
-    if (url) { window.open(url, '_blank', 'noopener'); return }
-    const win = window.open('', '_blank')
-    setBusy(true)
-    try {
-      const out = await runFn<{ saved?: boolean; url?: string; needs_connect?: boolean; error?: string }>(
-        'save_google_doc', { title: doc.title, markdown: doc.body ?? '' })
-      if (out?.saved && out.url) {
-        setUrl(out.url)
-        await records.update('deliverables', doc.id, { doc_url: out.url })
-        bump()
-        if (win) win.location.href = out.url
-        return
-      }
-      if (out?.needs_connect) {
-        const c = await runFn<{ authorization_url?: string }>('connect_source', { app: 'google_docs' })
-        if (c?.authorization_url && win) { win.location.href = c.authorization_url; toast('Connect Google Docs, then press Open again') }
-        else { win?.close(); toast('Google Docs is connected — press Open again') }
-        return
-      }
-      win?.close()
-      toast(out?.error || 'Could not create the Google Doc')
-    } catch (e) {
-      win?.close()
-      toast((e as Error)?.message || 'Could not create the Google Doc')
-    } finally { setBusy(false) }
-  }
-
-  const tools = (
-    <div className="paper-tools">
-      {fileOf(doc) && (
-        <button className="btn line sm" onClick={() => void openFile(fileOf(doc), toast)}>
-          <FileText size={12} /> Open {(doc.format || 'file').toUpperCase() === 'PDF' ? 'PDF' : 'file'}
-        </button>
-      )}
-      <button className="btn line sm" disabled={busy} onClick={() => void toGoogle()}>
-        <ExternalLink size={12} /> {busy ? 'Opening…' : 'Google Docs'}
-      </button>
-      <button className="icon-btn" title="Download for Word"
-        onClick={() => download(`${safeName}.doc`, 'application/msword', asWordHtml(doc.title, bodyRef.current))}>
-        <Download size={14} />
-      </button>
-      <button className="icon-btn" title="Copy as markdown" onClick={() => { void navigator.clipboard.writeText(doc.body ?? ''); toast('Copied') }}>
-        <Copy size={14} />
-      </button>
-      <button className="icon-btn" title="Download .md" onClick={() => download(`${safeName}.md`, 'text/markdown', `# ${doc.title}\n\n${doc.body ?? ''}`)}>
-        <FileText size={14} />
-      </button>
-    </div>
-  )
-
-  if (reader) {
-    return (
-      <article className="reader">
-        <div className="reader-top">{tools}</div>
-        <h1 className="reader-title">{doc.title}</h1>
-        <div ref={bodyRef} className="reader-body"><Markdown text={body} /></div>
-      </article>
-    )
-  }
-  return (
-    <div className="paper">
-      <div className="paper-head">
-        <span className="paper-k"><FileText size={13} /> Document</span>
-        {tools}
-      </div>
-      <div className="paper-title">{doc.title}</div>
-      <div ref={bodyRef} className={`paper-body${open ? ' open' : ''}`}><Markdown text={body} /></div>
-      <div className="letter-foot">
-        <button className="link-q" onClick={() => setOpen((v) => !v)}>{open ? 'Show less' : 'Read all'}</button>
-        <span className="grow" />
-        <button className="link-q" onClick={() => push({ type: 'doc', id: doc.id })}>Open as a page →</button>
-      </div>
-    </div>
-  )
-}
-
 /* ---------------- pick the right shape ---------------- */
 
-export function Prepared({ draft, onSent, docs, onDirect }: {
+interface Carry { attach?: string[]; onAttach?: (ids: string[]) => void }
+
+export function Prepared({ draft, onSent, docs, onDirect, attach, onAttach }: Carry & {
   draft: DraftRow; onSent?: () => void; docs?: DocRow[]
   /** "Something else": the person says which way in their own words and the assistant writes it */
   onDirect?: (direction: string) => void
 }) {
   const c = asChoices(draft.options)
-  if (c) return <Decided draft={draft} c={c} onSent={onSent} docs={docs} onDirect={onDirect} />
-  return <Shaped draft={draft} onSent={onSent} docs={docs} />
+  if (c) return <Decided draft={draft} c={c} onSent={onSent} docs={docs} onDirect={onDirect} attach={attach} onAttach={onAttach} />
+  return <Shaped draft={draft} onSent={onSent} docs={docs} attach={attach} onAttach={onAttach} />
 }
 
-function Shaped({ draft, onSent, docs, onEdit }: { draft: DraftRow; onSent?: () => void; docs?: DocRow[]; onEdit?: (s: string, b: string) => void }) {
+function Shaped({ draft, onSent, docs, onEdit, attach, onAttach }: Carry & { draft: DraftRow; onSent?: () => void; docs?: DocRow[]; onEdit?: (s: string, b: string) => void }) {
   if ((draft.kind ?? '') === 'meeting' && asMeeting(draft.meeting)?.slots?.length) {
     return <Invitation draft={draft} onSent={onSent} />
   }
-  return <Letter draft={draft} onSent={onSent} docs={docs} onEdit={onEdit} />
+  return <Letter draft={draft} onSent={onSent} docs={docs} onEdit={onEdit} attach={attach} onAttach={onAttach} />
 }
 
 /* ---------------- a decision that is theirs ---------------- */
@@ -698,7 +599,7 @@ function Shaped({ draft, onSent, docs, onEdit }: { draft: DraftRow; onSent?: () 
 /* The reply turns on a yes or no only the person can make, and nothing on record says which
    way they went. So it asks first: one button per answer, each already written. Once one is
    picked the letter is that version, and the answers stay above it to switch between. */
-function Decided({ draft, c, onSent, docs, onDirect }: {
+function Decided({ draft, c, onSent, docs, onDirect, attach, onAttach }: Carry & {
   draft: DraftRow; c: Choices; onSent?: () => void; docs?: DocRow[]; onDirect?: (direction: string) => void
 }) {
   const { bump } = useNav()
@@ -744,7 +645,7 @@ function Decided({ draft, c, onSent, docs, onDirect }: {
         )}
       </div>
       {c.chosen !== null && (
-        <Shaped key={`${draft.id}:${c.chosen}`} draft={draft} onSent={onSent} docs={docs}
+        <Shaped key={`${draft.id}:${c.chosen}`} draft={draft} onSent={onSent} docs={docs} attach={attach} onAttach={onAttach}
           onEdit={(subject, body) => { edits.current = { subject, body } }} />
       )}
     </>
@@ -754,10 +655,10 @@ function Decided({ draft, c, onSent, docs, onDirect }: {
 /** Referenced from chat by id (`[[draft:…]]` / `[[doc:…]]`): a chip that opens the real
  *  thing in Focus, never pasted into the conversation. */
 export function WorkChip({ kind, id }: { kind: 'draft' | 'doc'; id: string }) {
-  const { version, open } = useNav()
+  const { version, open, view } = useNav()
   const d = useSql<DraftRow>(rev(kind === 'draft' ? draftById(id) : null, version))
   const doc = useSql<DocRow>(rev(kind === 'doc'
-    ? `select id, title, status, loop_id from deliverables where id=${lit(id)} limit 1`
+    ? `select id, title, kind, format, status, loop_id from deliverables where id=${lit(id)} limit 1`
     : null, version))
   if (kind === 'draft') {
     const row = d.items[0]
@@ -791,9 +692,9 @@ export function WorkChip({ kind, id }: { kind: 'draft' | 'doc'; id: string }) {
   const row = doc.items[0]
   if (!row) return null
   return (
-    <button className="workchip" onClick={() => open({ type: 'doc', id: row.id })}>
+    <button className="workchip" onClick={() => view(row.id)}>
       <span className="workchip-ic"><FileText size={14} /></span>
-      <span className="workchip-t"><b>{row.title}</b><small>Document</small></span>
+      <span className="workchip-t"><b>{row.title}</b><small>{kindLabel(row)}</small></span>
       <span className="workchip-s">Read →</span>
     </button>
   )
@@ -802,7 +703,6 @@ export function WorkChip({ kind, id }: { kind: 'draft' | 'doc'; id: string }) {
 export function useDocsForLoop(loopId: string | null) {
   const { version } = useNav()
   return useSql<DocRow>(rev(loopId
-    ? `select id, title, body, doc_url, file_path, format, status, created_at, loop_id from deliverables
-       where loop_id=${lit(loopId)} and status <> 'discarded' order by created_at desc limit 3`
+    ? `${ART_SELECT} where d.loop_id=${lit(loopId)} and d.status <> 'discarded' order by d.created_at desc limit 3`
     : null, version))
 }

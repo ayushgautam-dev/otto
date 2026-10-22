@@ -43,6 +43,7 @@ Then read enough to sound like someone who was actually there:
   the decision or an honest date by which it will come, and the decision has to be
   theirs: see *When the answer is theirs to choose*.
 - Close with the next step, concretely.
+- **Plain text.** No markdown in an email: no `**bold**`, no `#` headings, no `[text](link)`. A section label is its own line ending in a colon; points are `- ` lines, which go out as real bullets.
 - No filler, no apology padding, no "just circling back" unless the person's
   own voice document uses that register.
 - Match the medium: `source: "slack"` means no subject line and a shorter,
@@ -119,13 +120,21 @@ The person approves work as a card, not as a text box, so every draft declares w
 |---|---|---|
 | `email` | the answer is something said — a reply, a nudge, a confirmation | `subject`, `body`, `to_emails`, `cc_emails` |
 | `meeting` | a call was agreed, or the fastest way to settle it is 30 minutes | `meeting` = `{"title","duration_min","attendees":[emails],"location":"Google Meet","slots":[{"start","end"}…]}` with **2–4 real slots from `find_free_slots`**, plus a short covering `body` |
-| `document` | what was promised is a thing — a JD, an offer letter, a proposal, an LOI, specs, a deck outline | write the document as a row in `deliverables` (`kind:'doc'`, `status:'pending'`, `loop_id`, full markdown `body`) **and** an `email` draft that sends it, with the covering note |
+| `document` | what was promised is a thing — a JD, an offer letter, a proposal, an LOI, specs, an invoice, a pricing sheet, a deck | write **one row in `deliverables` per thing promised** (see *Which kind of thing*; `status:'pending'`, `loop_id`, full markdown `body`) **and** an `email` draft that sends it, with the covering note |
 
 For `document`: write the real document, complete, in the person's voice and with real
 facts from the record — not an outline and not `[link]` placeholders. Where a fact is
 genuinely unknown (a salary figure nobody has said, a bank detail), leave one clearly
 marked `[…]` and say so in `note`. Offer letters, JDs and proposals follow the normal
 shape of that document; ask nothing you could reasonably assume.
+
+### Which kind of thing
+
+Make only what was promised, in the form it was promised. An invoice is one document; "the proposal and the pricing" is two. Never add a sheet or a deck nobody promised.
+
+- Words to read (letter, proposal, invoice, minutes, JD): `kind:'doc'`, markdown body.
+- Numbers someone will work with (pricing, budget, tracker): `kind:'doc'`, `format:'xlsx'` or `'gsheet'`; one `## Tab` heading per tab over one table; header row first; a total row starts with "Total".
+- Something to present (pitch, board update): `kind:'deck'`; slides split by a `---` line, each starting with `## Title`; two to four `- **Label** — text` points show as cards.
 
 ## A formal document follows the last one like it
 

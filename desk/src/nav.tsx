@@ -37,6 +37,11 @@ interface Nav {
   close: () => void
   wide: boolean
   setWide: (v: boolean) => void
+  /** a prepared document, sheet or deck open over everything, with the others made for
+   *  the same thing beside it as tabs */
+  viewing: { id: string; group: string[] } | null
+  view: (id: string, group?: string[]) => void
+  closeView: () => void
   bump: () => void
   version: number
 }
@@ -44,7 +49,7 @@ interface Nav {
 const NavCtx = createContext<Nav>({
   route: '/', navigate: () => {}, focus: null, tabs: [],
   open: () => {}, push: () => {}, focusTab: () => {}, closeTab: () => {}, close: () => {},
-  wide: false, setWide: () => {}, bump: () => {}, version: 0,
+  wide: false, setWide: () => {}, viewing: null, view: () => {}, closeView: () => {}, bump: () => {}, version: 0,
 })
 export const useNav = () => useContext(NavCtx)
 
@@ -62,6 +67,7 @@ export function NavProvider({ children }: { children: ReactNode }) {
   const [route, setRoute] = useState(() => window.location.hash.slice(1) || '/')
   const [state, setState] = useState<{ tabs: Focus[]; active: string | null }>({ tabs: [], active: null })
   const [wide, setWide] = useState(false)
+  const [viewing, setViewing] = useState<{ id: string; group: string[] } | null>(null)
   const [version, setVersion] = useState(0)
 
   useEffect(() => {
@@ -105,6 +111,9 @@ export function NavProvider({ children }: { children: ReactNode }) {
   }), [])
   const close = useCallback(() => setState({ tabs: [], active: null }), [])
   const bump = useCallback(() => setVersion((v) => v + 1), [])
+  const view = useCallback((id: string, group?: string[]) =>
+    setViewing({ id, group: group && group.includes(id) ? group : [id] }), [])
+  const closeView = useCallback(() => setViewing(null), [])
 
   const focus = state.tabs.find((t) => focusKey(t) === state.active) ?? null
 
@@ -118,7 +127,7 @@ export function NavProvider({ children }: { children: ReactNode }) {
       const t = e.target as HTMLElement | null
       if (e.key !== 'Escape' || !focus) return
       if (t?.closest?.('input,textarea,[contenteditable]')) return
-      if (document.querySelector('.lem.open, .palette')) return   // those own Escape first
+      if (document.querySelector('.lem.open, .palette, .viewer')) return   // those own Escape first
       closeTab(focusKey(focus))
     }
     window.addEventListener('keydown', on)
@@ -127,7 +136,8 @@ export function NavProvider({ children }: { children: ReactNode }) {
 
   return (
     <NavCtx.Provider value={{
-      route, navigate, focus, tabs: state.tabs, open, push, focusTab, closeTab, close, wide, setWide, bump, version,
+      route, navigate, focus, tabs: state.tabs, open, push, focusTab, closeTab, close, wide, setWide,
+      viewing, view, closeView, bump, version,
     }}>
       {children}
     </NavCtx.Provider>
