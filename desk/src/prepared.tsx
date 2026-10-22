@@ -347,6 +347,8 @@ export function Letter({ draft, onSent, docs = [], onEdit, attach: held_, onAtta
   const from = isReply
     ? threadAccount ?? (isOutlookThread(draft.thread_ref) ? accounts.mail.find((a) => a.provider === 'outlook') ?? null : null)
     : accounts.mail.find((a) => a.id === fromId) ?? accounts.primary
+  // Outlook cannot attach a file yet: from there a PDF goes inside the email, like any document
+  const attachable = (d: DocRow) => (from?.provider === 'outlook' ? '' : fileOf(d))
   const who = draft.person || to[0] || ''
   const [dragging, setDragging] = useState(false)
   const move = (e: string, toCc: boolean) => {
@@ -380,7 +382,7 @@ export function Letter({ draft, onSent, docs = [], onEdit, attach: held_, onAtta
 
   async function reallySend() {
     setState('sending')
-    const filed = docs.find((d) => attach.includes(d.id) && fileOf(d))
+    const filed = docs.find((d) => attach.includes(d.id) && attachable(d))
     try {
       const out = await runFn<{ sent?: boolean; error?: string; mode?: string }>('send_draft', {
         draft_id: draft.id, subject, body,
@@ -389,8 +391,8 @@ export function Letter({ draft, onSent, docs = [], onEdit, attach: held_, onAtta
         account_id: from?.id ?? null, provider: from?.provider ?? null,
         // the first document that exists as a file goes as a real attachment; any others,
         // and documents that are only text, are written into the email
-        attachment_path: filed ? fileOf(filed) : null,
-        attachment_name: filed ? fileOf(filed).split('/').pop() : null,
+        attachment_path: filed ? attachable(filed) : null,
+        attachment_name: filed ? attachable(filed).split('/').pop() : null,
         appendix_html: docs.filter((d) => attach.includes(d.id) && d.id !== filed?.id).map(docAsHtml).join('<hr style="margin:24px 0">') || null,
       })
       if (!out?.sent) {
@@ -451,10 +453,10 @@ export function Letter({ draft, onSent, docs = [], onEdit, attach: held_, onAtta
         <div className="attach-row">
           {docs.map((d) => attach.includes(d.id) ? (
             <span key={d.id} className="attach-f">
-              <span className={`attach-b ${fileOf(d) ? 'pdf' : artType(d)}`}>{fileOf(d) ? 'PDF' : artType(d) === 'sheet' ? 'SHEET' : artType(d) === 'deck' ? 'SLIDES' : 'DOC'}</span>
+              <span className={`attach-b ${attachable(d) ? 'pdf' : artType(d)}`}>{attachable(d) ? 'PDF' : artType(d) === 'sheet' ? 'SHEET' : artType(d) === 'deck' ? 'SLIDES' : 'DOC'}</span>
               <span className="attach-t">
                 <b>{d.title}</b>
-                <small>{fileOf(d) ? 'Attached as a PDF' : 'Written into the email, under your note'}</small>
+                <small>{attachable(d) ? 'Attached as a PDF' : 'Written into the email, under your note'}</small>
               </span>
               <button className="icon-btn" aria-label={`Leave out ${d.title}`} onClick={() => setAttach((a) => a.filter((x) => x !== d.id))}><X size={12} /></button>
             </span>
